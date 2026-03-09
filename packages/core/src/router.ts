@@ -1,124 +1,233 @@
 import { DEFAULT_DIM, dot, embed } from "./embed";
-import { CommandDef, IntentRouterOptions, RankedCommand, UserProfile, ScoreSignal } from "./types";
+import {
+  CommandDef,
+  EmbedOptions,
+  IntentRouterOptions,
+  RankedCommand,
+  UserProfile,
+  ScoreSignal,
+  CommandId,
+  IndexedCommand,
+  SignalContribution,
+  ScoreSignalResult,
+  PostRankStage,
+} from "./types";
 import { defaultSignals } from "./signals";
-import { cloneProfile, learnIntoProfile } from "./profile";
+import {
+  bumpAffinity,
+  cloneProfile,
+  learnIntoProfile,
+  mergeProfiles,
+} from "./profile";
+import { embedCommand } from "./utils";
 
-// internal representation of a command with its embedded vector
-type IndexedCommand = {
-  command: CommandDef;
-  vec: Float32Array;
+export type RankOptions<TMeta = unknown> = {
+  query: string;
+  profile?: UserProfile<TMeta>;
+  limit?: number;
+  useLocalProfile?: boolean;
 };
 
-function buildCommandText(command: CommandDef): string {
-  return [command.title, ...(command.synonyms ?? []), ...(command.keywords ?? [])]
-    .filter(Boolean)
-    .join(" ");
+type RankedInternal<TData = unknown> = RankedCommand<TData> & {
+  _index: number;
+};
+
+function normalizeLimit(limit: number | undefined, fallback = 10): number {
+  if (limit == null || !Number.isFinite(limit)) return fallback;
+  return Math.max(0, Math.floor(limit));
 }
 
-function mergeProfiles(
-  local?: UserProfile,
-  external?: UserProfile
-): UserProfile {
-  if (!local && !external) return {};
-  const out: UserProfile = {};
-  if (local) {
-    if (local.centroids) out.centroids = { ...local.centroids };
-    if (local.counts) out.counts = { ...local.counts };
-    if (local.affinities) out.affinities = { ...local.affinities };
-    if (local.metadata) out.metadata = { ...local.metadata };
-  }
-  if (external) {
-    if (external.centroids) out.centroids = { ...out.centroids, ...external.centroids };
-    if (external.counts) out.counts = { ...out.counts, ...external.counts };
-    if (external.affinities) out.affinities = { ...out.affinities, ...external.affinities };
-    if (external.metadata) out.metadata = { ...out.metadata, ...external.metadata };
-  }
-  return out;
+function isBlankQuery(query: string): boolean {
+  return query.trim().length === 0;
 }
 
-export class IntentRouter {
-  private dimension: number;
-  private embedOptions = {};
-  private signals: ScoreSignal[];
-  private indexed: IndexedCommand[];
-  private localProfile: UserProfile = {};
+function normalizeSignalResult(
+  result: number | ScoreSignalResult,
+  index: number
+): SignalContribution {
+  if (typeof result === "number") {
+    return {
+      name: `signal_${index}`,
+      score: result,
+    };
+  }
 
-  constructor(options: IntentRouterOptions) {
+  return {
+    name: result.name ?? `signal_${index}`,
+    score: result.score,
+  };
+}
+
+export class IntentRouter<TData = unknown, TMeta = unknown> {
+  private readonly dimension: number;
+  private readonly embedOptions: EmbedOptions;
+  private readonly signals: readonly ScoreSignal<TData, TMeta>[];
+  private readonly postRankStages: readonly PostRankStage<TData, TMeta>[];
+  private indexed: IndexedCommand<TData>[];
+  private commandIds: Set<CommandId>;
+  private localProfile: UserProfile<TMeta> = {};
+
+  constructor(options: IntentRouterOptions<TData, TMeta>) {
     this.dimension = options.dimension ?? DEFAULT_DIM;
-    if (options.embedOptions) this.embedOptions = options.embedOptions;
-    this.signals = options.signals ?? [...defaultSignals];
-
-    this.indexed = options.commands.map((command) => ({
-      command,
-      vec: embed(buildCommandText(command), this.dimension, this.embedOptions),
-    }));
+    this.embedOptions = options.embedOptions ?? {};
+    this.signals =
+      options.signals ?? (defaultSignals as readonly ScoreSignal<TData, TMeta>[]);
+    this.postRankStages = options.postRankStages ?? [];
+    this.indexed = [];
+    this.commandIds = new Set();
+    this.setCommands(options.commands);
   }
 
-  /**
-   * Rank a query against the command set. `profile` is an external profile
-   * (e.g. fetched from backend). If `useLocalProfile` is true we merge the
-   * router's in-memory local profile with the external one (external keys
-   * take precedence).
-   */
-  rank(args: {
-    query: string;
-    profile?: UserProfile;
-    limit?: number;
-    useLocalProfile?: boolean;
-  }): RankedCommand[] {
-    const { query, profile, limit = 10, useLocalProfile = false } = args;
-    const queryVector = embed(query, this.dimension, this.embedOptions);
+  rank(args: RankOptions<TMeta>): RankedCommand<TData>[] {
+    const { query, profile, useLocalProfile = false } = args;
+    const limit = normalizeLimit(args.limit);
+    const blankQuery = isBlankQuery(query);
+
+    const queryVec = blankQuery
+      ? new Float32Array(this.dimension)
+      : embed(query, this.dimension, this.embedOptions);
 
     const mergedProfile = useLocalProfile
-      ? mergeProfiles(this.localProfile, profile)
-      : profile;
+      ? this.validateProfileDimensions(mergeProfiles(this.localProfile, profile))
+      : this.validateProfileDimensions(profile);
 
-    const results = this.indexed.map((item) => {
-      const baseScore = dot(queryVector, item.vec);
-      const signalBoost = this.signals.reduce(
-        (sum, sig) => sum + sig({
-          query,
-          queryVec: queryVector,
-          command: item.command,
-          commandVec: item.vec,
-          baseScore,
-          profile: mergedProfile,
-        }),
-        0
+    const initialResults: RankedInternal<TData>[] = this.indexed.map((item) => {
+      const baseScore = blankQuery ? 0 : dot(queryVec, item.vec);
+
+      const signals = this.signals.map((signal, index) =>
+        normalizeSignalResult(
+          signal({
+            query,
+            isBlankQuery: blankQuery,
+            queryVec,
+            command: item.command,
+            commandVec: item.vec,
+            baseScore,
+            profile: mergedProfile,
+          }),
+          index
+        )
       );
+
+      const signalBoost = signals.reduce((sum, s) => sum + s.score, 0);
+      const finalScore = baseScore + signalBoost;
+
       return {
         id: item.command.id,
-        score: baseScore + signalBoost,
-        breakdown: { baseScore, signalBoost },
+        score: finalScore,
+        breakdown: {
+          baseScore,
+          signalBoost,
+          finalScore,
+          signals,
+        },
         command: item.command,
+        _index: item.index,
       };
     });
 
-    return results.sort((a, b) => b.score - a.score).slice(0, limit);
+    const sorted = initialResults.sort(
+      (a, b) => b.score - a.score || a._index - b._index
+    );
+
+    const postRankInput: RankedCommand<TData>[] = sorted.map(({ _index, ...result }) => result);
+
+    const postRanked = this.postRankStages.reduce(
+      (results, stage) =>
+        stage({
+          query,
+          isBlankQuery: blankQuery,
+          profile: mergedProfile,
+          results,
+        }),
+      postRankInput
+    );
+
+    return postRanked.slice(0, limit);
   }
 
-  /* local profile learning and management */
-  learnLocal(args: { query: string; commandId: string; affinityDelta?: number }) {
+  learnLocal(args: {
+    query: string;
+    commandId: CommandId;
+    affinityDelta?: number;
+  }): UserProfile<TMeta> {
     const { query, commandId, affinityDelta = 1 } = args;
-    const queryVec = embed(query, this.dimension, this.embedOptions);
-    this.localProfile = learnIntoProfile({
-      profile: this.localProfile,
-      commandId,
-      queryVec,
-      affinityDelta,
-    });
+
+    if (!this.commandIds.has(commandId)) {
+      throw new Error(`Unknown commandId: ${commandId}`);
+    }
+
+    const blankQuery = isBlankQuery(query);
+
+    this.localProfile = blankQuery
+      ? bumpAffinity({
+          profile: this.localProfile,
+          commandId,
+          affinityDelta,
+        })
+      : learnIntoProfile({
+          profile: this.localProfile,
+          commandId,
+          queryVec: embed(query, this.dimension, this.embedOptions),
+          affinityDelta,
+        });
+
     return cloneProfile(this.localProfile);
   }
 
-  exportProfile(): UserProfile {
+  exportProfile(): UserProfile<TMeta> {
     return cloneProfile(this.localProfile);
   }
 
-  loadProfile(profile?: UserProfile) {
-    this.localProfile = profile ? cloneProfile(profile) : {};
+  loadProfile(profile?: UserProfile<TMeta>): UserProfile<TMeta> {
+    const normalized = cloneProfile(profile ?? {});
+    this.localProfile = this.validateProfileDimensions(normalized);
+    return cloneProfile(this.localProfile);
   }
 
-  resetProfile() {
+  resetProfile(): UserProfile<TMeta> {
     this.localProfile = {};
+    return cloneProfile(this.localProfile);
+  }
+
+  setCommands(commands: readonly CommandDef<TData>[]): void {
+    this.indexed = commands.map((command, index) => ({
+      index,
+      command,
+      vec: embedCommand(command, this.dimension, this.embedOptions),
+    }));
+    this.commandIds = new Set(commands.map((command) => command.id));
+  }
+
+  addCommands(commands: readonly CommandDef<TData>[]): void {
+    const startIndex = this.indexed.length;
+
+    for (let i = 0; i < commands.length; i++) {
+      const command = commands[i];
+      this.indexed.push({
+        index: startIndex + i,
+        command,
+        vec: embedCommand(command, this.dimension, this.embedOptions),
+      });
+      this.commandIds.add(command.id);
+    }
+  }
+
+  private validateProfileDimensions(
+    profile?: UserProfile<TMeta>
+  ): UserProfile<TMeta> {
+    if (!profile) return {};
+
+    if (profile.centroids) {
+      for (const [commandId, vec] of Object.entries(profile.centroids)) {
+        if (vec.length !== this.dimension) {
+          throw new Error(
+            `Profile centroid dimension mismatch for command "${commandId}". Expected ${this.dimension}, got ${vec.length}.`
+          );
+        }
+      }
+    }
+
+    return profile;
   }
 }

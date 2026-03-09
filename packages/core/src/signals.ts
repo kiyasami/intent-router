@@ -1,44 +1,73 @@
 import { dot } from "./embed";
 import { confidence } from "./profile";
-import { ScoreSignal } from "./types";
+import { CommandId, ScoreSignal } from "./types";
 
-/**
- * Boost based on the centroid vector stored in the profile for a command.
- * Returns a small weighted score scaled by confidence.
- */
+const CENTROID_SIGNAL_WEIGHT = 0.2;
+const AFFINITY_SIGNAL_WEIGHT = 0.04;
+const AFFINITY_SIGNAL_CAP = 0.12;
+const PINNED_ROUTE_BOOST = 0.08;
+
+type PinnedRouteMetadata = {
+  pinnedRoutes?: readonly CommandId[];
+};
+
+function hasPinnedRoutesMetadata(value: unknown): value is PinnedRouteMetadata {
+  if (!value || typeof value !== "object") return false;
+  return "pinnedRoutes" in value;
+}
+
 export const centroidSignal: ScoreSignal = ({
+  isBlankQuery,
   queryVec,
   command,
   profile,
 }) => {
-  const centroidRaw = profile?.centroids?.[command.id];
+  if (isBlankQuery) return { name: "centroid", score: 0 };
+
+  const centroid = profile?.centroids?.[command.id];
   const count = profile?.counts?.[command.id] ?? 0;
-  if (!centroidRaw) return 0;
-  const centroid = Float32Array.from(centroidRaw);
-  return 0.2 * dot(queryVec, centroid) * confidence(count);
+
+  if (!centroid || count <= 0) {
+    return { name: "centroid", score: 0 };
+  }
+
+  return {
+    name: "centroid",
+    score: CENTROID_SIGNAL_WEIGHT * dot(queryVec, centroid as Float32Array) * confidence(count),
+  };
 };
 
-/**
- * Simple affinity boost. The profile.affinities value is treated as a
- * recency/frequency counter and scaled into a small capped boost.
- */
 export const affinitySignal: ScoreSignal = ({ command, profile }) => {
   const affinity = profile?.affinities?.[command.id] ?? 0;
-  return Math.min(0.1, affinity * 0.02);
+  if (affinity <= 0) return { name: "affinity", score: 0 };
+
+  return {
+    name: "affinity",
+    score: Math.min(
+      AFFINITY_SIGNAL_CAP,
+      AFFINITY_SIGNAL_WEIGHT * Math.log1p(affinity)
+    ),
+  };
 };
 
-/**
- * An example custom signal that can be used by applications. If the
- * profile.metadata.pinnedRoutes array contains the command id, return a
- * fixed small boost. This demonstrates how users can provide their own
- * signals; the demo app uses it.
- */
 export const pinnedRouteSignal: ScoreSignal = ({ command, profile }) => {
-  const pins = profile?.metadata?.pinnedRoutes;
-  if (Array.isArray(pins) && pins.includes(command.id)) {
-    return 0.08;
+  const metadata = profile?.metadata;
+  if (!hasPinnedRoutesMetadata(metadata)) {
+    return { name: "pinned", score: 0 };
   }
-  return 0;
+
+  const pins = metadata.pinnedRoutes;
+  if (!Array.isArray(pins)) {
+    return { name: "pinned", score: 0 };
+  }
+
+  return {
+    name: "pinned",
+    score: pins.includes(command.id) ? PINNED_ROUTE_BOOST : 0,
+  };
 };
 
-export const defaultSignals: ScoreSignal[] = [centroidSignal, affinitySignal];
+export const defaultSignals: readonly ScoreSignal[] = [
+  centroidSignal,
+  affinitySignal,
+];

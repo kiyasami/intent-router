@@ -1,6 +1,9 @@
-import { EmbedOptions } from "./types";
+import { EmbedGroup, EmbedOptions } from "./types";
 
 export const DEFAULT_DIM = 1024;
+const DEFAULT_WORD_WEIGHT = 3;
+const DEFAULT_CHAR_WEIGHT = 1;
+const DEFAULT_CHAR_N = 3;
 
 export function normalizeText(text: string): string {
   return text.toLowerCase().trim().replace(/\s+/g, " ");
@@ -17,26 +20,94 @@ export function fnv1a32(str: string): number {
 
 export function tokenizeWords(text: string): string[] {
   const normalized = normalizeText(text);
-  // split on non-alphanumeric, keeping only real words
   const matches = normalized.match(/\b\w+\b/g);
-  return matches ? matches : [];
+  return matches ?? [];
 }
 
-export function charNgrams(text: string, n = 3): string[] {
-  const s = `__${normalizeText(text)}__`;
+export function charNgrams(text: string, n = DEFAULT_CHAR_N): string[] {
+  const normalized = normalizeText(text);
+  if (!normalized || n <= 0) return [];
+
+  const pad = "_".repeat(Math.max(1, n - 1));
+  const s = `${pad}${normalized}${pad}`;
   const grams: string[] = [];
-  for (let i = 0; i < s.length - n + 1; i++) {
+
+  for (let i = 0; i <= s.length - n; i++) {
     grams.push(s.slice(i, i + n));
   }
+
   return grams;
 }
 
 export function l2Normalize(vec: Float32Array): Float32Array {
   let sumSq = 0;
-  for (let i = 0; i < vec.length; i++) sumSq += vec[i] * vec[i];
-  const norm = Math.sqrt(sumSq) || 1;
-  for (let i = 0; i < vec.length; i++) vec[i] /= norm;
+  for (let i = 0; i < vec.length; i++) {
+    sumSq += vec[i] * vec[i];
+  }
+
+  if (sumSq === 0) return vec;
+
+  const norm = Math.sqrt(sumSq);
+  for (let i = 0; i < vec.length; i++) {
+    vec[i] /= norm;
+  }
+
   return vec;
+}
+
+function accumulateWeightedFeatures(
+  vec: Float32Array,
+  features: Iterable<string>,
+  weight: number,
+  prefix: string
+): void {
+  if (weight === 0) return;
+
+  const counts = new Map<string, number>();
+  for (const feature of features) {
+    counts.set(feature, (counts.get(feature) ?? 0) + 1);
+  }
+
+  for (const [feature, count] of counts) {
+    const idx = fnv1a32(`${prefix}:${feature}`) % vec.length;
+    vec[idx] += weight * (1 + Math.log(count));
+  }
+}
+
+export function embedGroups(
+  groups: readonly EmbedGroup[],
+  dim = DEFAULT_DIM,
+  opts: EmbedOptions = {}
+): Float32Array {
+  const {
+    dimension = dim,
+    wordWeight = DEFAULT_WORD_WEIGHT,
+    charWeight = DEFAULT_CHAR_WEIGHT,
+    charN = DEFAULT_CHAR_N,
+  } = opts;
+
+  const vec = new Float32Array(dimension);
+
+  for (const group of groups) {
+    const normalized = normalizeText(group.text);
+    if (!normalized || group.weight === 0) continue;
+
+    accumulateWeightedFeatures(
+      vec,
+      tokenizeWords(normalized),
+      wordWeight * group.weight,
+      `${group.prefix}-w`
+    );
+
+    accumulateWeightedFeatures(
+      vec,
+      charNgrams(normalized, charN),
+      charWeight * group.weight,
+      `${group.prefix}-c`
+    );
+  }
+
+  return l2Normalize(vec);
 }
 
 export function embed(
@@ -44,30 +115,21 @@ export function embed(
   dim = DEFAULT_DIM,
   opts: EmbedOptions = {}
 ): Float32Array {
-  const {
-    dimension = dim,
-    wordWeight = 3,
-    charWeight = 1,
-    charN = 3,
-  } = opts;
-
-  const vec = new Float32Array(dimension);
-  const words = tokenizeWords(text);
-  for (const w of words) {
-    const idx = fnv1a32(`w:${w}`) % dimension;
-    vec[idx] += wordWeight;
-  }
-  const grams = charNgrams(text, charN);
-  for (const g of grams) {
-    const idx = fnv1a32(`c:${g}`) % dimension;
-    vec[idx] += charWeight;
-  }
-
-  return l2Normalize(vec);
+  return embedGroups(
+    [{ prefix: "text", text, weight: 1 }],
+    dim,
+    opts
+  );
 }
 
 export function dot(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) {
+    throw new Error("Vector dimension mismatch");
+  }
+
   let s = 0;
-  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  for (let i = 0; i < a.length; i++) {
+    s += a[i] * b[i];
+  }
   return s;
 }
