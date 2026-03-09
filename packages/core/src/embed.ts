@@ -1,3 +1,5 @@
+import { EmbedOptions } from "./types";
+
 export const DEFAULT_DIM = 1024;
 
 export function normalizeText(text: string): string {
@@ -13,11 +15,18 @@ export function fnv1a32(str: string): number {
   return h >>> 0;
 }
 
-export function charTrigrams(text: string): string[] {
+export function tokenizeWords(text: string): string[] {
+  const normalized = normalizeText(text);
+  // split on non-alphanumeric, keeping only real words
+  const matches = normalized.match(/\b\w+\b/g);
+  return matches ? matches : [];
+}
+
+export function charNgrams(text: string, n = 3): string[] {
   const s = `__${normalizeText(text)}__`;
   const grams: string[] = [];
-  for (let i = 0; i < s.length - 2; i++) {
-    grams.push(s.slice(i, i + 3));
+  for (let i = 0; i < s.length - n + 1; i++) {
+    grams.push(s.slice(i, i + n));
   }
   return grams;
 }
@@ -30,12 +39,30 @@ export function l2Normalize(vec: Float32Array): Float32Array {
   return vec;
 }
 
-export function embed(text: string, dim = DEFAULT_DIM): Float32Array {
-  const vec = new Float32Array(dim);
-  for (const gram of charTrigrams(text)) {
-    const idx = fnv1a32(gram) % dim;
-    vec[idx] += 1;
+export function embed(
+  text: string,
+  dim = DEFAULT_DIM,
+  opts: EmbedOptions = {}
+): Float32Array {
+  const {
+    dimension = dim,
+    wordWeight = 3,
+    charWeight = 1,
+    charN = 3,
+  } = opts;
+
+  const vec = new Float32Array(dimension);
+  const words = tokenizeWords(text);
+  for (const w of words) {
+    const idx = fnv1a32(`w:${w}`) % dimension;
+    vec[idx] += wordWeight;
   }
+  const grams = charNgrams(text, charN);
+  for (const g of grams) {
+    const idx = fnv1a32(`c:${g}`) % dimension;
+    vec[idx] += charWeight;
+  }
+
   return l2Normalize(vec);
 }
 

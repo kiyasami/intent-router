@@ -1,27 +1,18 @@
-import { dot } from "./embed";
-import { confidence } from "./profile";
-import { UserProfile } from "./types";
+import { CommandDef, UserProfile, ScoreSignal, ScoreSignalArgs } from "./types";
+import { centroidSignal, affinitySignal } from "./signals";
 
-export function computeProfileBoost(args: {
-  queryVector: Float32Array;
-  commandId: string;
-  profile?: UserProfile;
-}): number {
-  const { queryVector, commandId, profile } = args;
-
-  let profileBoost = 0;
-  const centroidRaw = profile?.centroids?.[commandId];
-  const count = profile?.counts?.[commandId] ?? 0;
-  const affinity = profile?.affinities?.[commandId] ?? 0;
-
-  if (centroidRaw) {
-    const centroid = Float32Array.from(centroidRaw);
-    profileBoost += 0.2 * dot(queryVector, centroid) * confidence(count);
+/**
+ * Convenience helper that applies a list of signals (defaults to the
+ * built‑in centroid+affinity signals) and returns their sum. This mirrors
+ * how the router scores results but can be used standalone for testing or
+ * utilities.
+ */
+export function computeProfileBoost(
+  args: Omit<ScoreSignalArgs, "commandVec"> & {
+    commandVec?: Float32Array;
+    signals?: ScoreSignal[];
   }
-
-  if (affinity) {
-    profileBoost += Math.min(0.1, affinity * 0.02);
-  }
-
-  return profileBoost;
+): number {
+  const { signals = [centroidSignal, affinitySignal] } = args;
+  return signals.reduce((sum, sig) => sum + sig(args as ScoreSignalArgs), 0);
 }
