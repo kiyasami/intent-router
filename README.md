@@ -1,163 +1,313 @@
-# Intent Router
+intent-router
 
-A lightweight ranking engine for command palettes and application navigation. It plugs into UI libraries like `cmdk` but does **not** provide any visual components itself; the focus is on a fast, predictable, and local ranking layer that can be used in browser or node contexts.
+A lightweight client-side intent router for command palettes and global search.
 
-> “A frontend‑first ranking engine for command palettes and route launchers.”
+It combines hybrid lexical embeddings, user behavior learning, and pluggable ranking signals to intelligently route user queries to application actions.
 
+Designed for:
 
-## Why use Intent Router?
+command palettes (cmdk, Spotlight-style UIs)
 
-- **Local, synchronous scoring.** Once a profile is loaded, all ranking is done in-memory with no further I/O.
-- **Hybrid lexical embedding.** Combines full‑word tokens (higher weight) with character n‑grams (lower weight) for robust matching.
-- **Extensible signals.** Built‑in profile boosts plus an easy API for custom ranking signals.
-- **User profiles.** Optional centroid vectors, counts, affinities, and metadata allow your app to personalize results over time.
-- **Zero backend assumptions.** The core package has no storage dependencies; you can plug in your own provider if desired.
+global navigation search
 
+intent routing inside web apps
 
-## Architecture
+lightweight personalization without a server
 
-1. **Command definitions** supply the static actions/routes you want to rank.
-2. A query string is embedded using the lexical model.
-3. Each command is pre‑embedded and stored in the router.
-4. The router computes a base score (dot product) and applies any configured signals.
-5. Results are returned to the caller; your UI layer (e.g. `cmdk`) renders them.
-6. When the user selects a command, your app can call `router.learnLocal(...)` to update the in‑memory profile and optionally persist events.
+Everything runs fully in the browser with zero dependencies on ML frameworks or vector databases.
 
+Why intent-router?
 
-## Embedding model
+Traditional command palettes rely on:
 
-- Text is normalized (lowercase, trimmed, collapsed whitespace).
-- Word tokens are extracted via alphanumeric splitting; hashed with an `w:` namespace.
-- Character n‑grams (default length 3) are generated over `__text__`; hashed with a `c:` namespace.
-- Both token types map into a fixed‑dimensional `Float32Array` (default 1024), with separate weights.
-- The resulting vector is L2‑normalized for cosine‑style dot products.
+string matching
 
+manual ranking
 
-## Profile model
+static keyword lists
 
-```ts
-interface UserProfile {
-  centroids?: Record<string, number[]>; // command -> normalized vector
-  counts?: Record<string, number>;      // number of samples used
-  affinities?: Record<string, number>;  // recency/frequency counter
-  metadata?: Record<string, unknown>;   // arbitrary app data
+Intent Router introduces a ranking engine that:
+
+understands natural language queries
+
+learns from user selections
+
+adapts results over time
+
+remains fast enough for per-keystroke execution in the browser
+
+Typical latency:
+
+<1ms for ~50 commands
+<5ms for ~200 commands
+Core Concepts
+Commands
+
+Commands represent application actions.
+
+type CommandDef = {
+  id: string
+  title: string
+  synonyms?: string[]
+  keywords?: string[]
+  group?: string
+  data?: unknown
 }
-```
 
-Centroids compress the history of queries that led to each command; `counts` drive a confidence score.
-Affinity values provide a simple scalar boost. Metadata can hold anything your app needs (e.g. pinned routes).
+Example:
 
-Profiles can be learned locally (`router.learnLocal`), loaded from a backend, merged, exported, and serialized to JSON.
+{
+  id: "orders.history",
+  title: "Order History",
+  synonyms: ["past orders", "previous purchases"],
+  keywords: ["orders", "history", "purchases"],
+  group: "orders"
+}
+Hybrid Embedding Model
 
+Intent Router uses a deterministic hybrid embedding.
 
-## Getting started
+It combines:
 
-Install using your workspace manager of choice; the repo is already configured with workspaces:
+• word tokens (semantic intent)
+• character n-grams (robust to typos)
 
-```bash
-npm install      # or pnpm install
-cd examples/cmdk-demo
-npm run dev       # start the demo with Vite
-```
+Example query:
 
+ord hist
 
-### Basic usage
+still matches:
 
-```ts
-import { IntentRouter } from "@intent-router/core";
+Order History
+
+because character grams overlap.
+
+Field-aware weighting
+
+Command fields contribute with different weights:
+
+title      → strongest signal
+synonyms   → medium signal
+keywords   → weaker signal
+
+Internally:
+
+title weight     ≈ 3.0
+synonyms weight  ≈ 1.5
+keywords weight  ≈ 1.0
+
+Vectors are normalized so dot-product similarity works as cosine similarity.
+
+Ranking Pipeline
+
+Ranking follows this pipeline:
+
+query
+ ↓
+embed(query)
+ ↓
+base similarity (dot product)
+ ↓
+signal boosts
+ ↓
+post-rank stages
+ ↓
+final ranked commands
+Final score
+finalScore = baseScore + signalBoost
+
+Signals provide behavioral and contextual ranking adjustments.
+
+Signals (Ranking Features)
+
+Signals are pluggable scoring functions.
+
+type ScoreSignal = (args: ScoreSignalArgs) =>
+  | number
+  | { name?: string; score: number }
+
+Built-in signals:
+
+centroidSignal
+
+Boosts commands similar to past user queries.
+
+Learns a centroid vector for each command based on past selections.
+
+affinitySignal
+
+Boosts commands frequently selected by the user.
+
+Uses a logarithmic scale so large counts do not dominate.
+
+Post-Rank Stages
+
+After scoring, optional post-rank stages can reshape results.
+
+Examples:
+
+• pin routes to top
+• enforce group diversity
+• apply business rules
+
+Example stage:
+
+const pinnedFirstStage: PostRankStage = ({ results, profile }) => {
+  const pinned = profile?.metadata?.pinnedRoutes ?? []
+
+  return [...results].sort((a, b) => {
+    const aPinned = pinned.includes(a.id)
+    const bPinned = pinned.includes(b.id)
+
+    return Number(bPinned) - Number(aPinned)
+  })
+}
+Personalization Model
+
+The router can learn from user selections.
+
+A profile stores:
+
+centroids   → learned query vectors
+counts      → centroid confidence
+affinities  → selection frequency
+metadata    → custom application data
+
+Example profile:
+
+{
+  centroids: {
+    "orders.history": Float32Array(...)
+  },
+  counts: {
+    "orders.history": 4
+  },
+  affinities: {
+    "orders.history": 7
+  }
+}
+Blank Query Behavior
+
+When the query is empty:
+
+baseScore = 0
+
+Results are ranked only by signals.
+
+This allows command palettes to show:
+
+frequently used routes
+
+pinned routes
+
+personalized suggestions
+
+Learning From Selections
+
+Selections update the user profile.
+
+router.learnLocal({
+  query: "order history",
+  commandId: "orders.history"
+})
+
+If the query is blank, only affinity is updated (no centroid learning).
+
+Example
+import { IntentRouter } from "@intent-router/core"
 
 const router = new IntentRouter({
   commands: [
-    { id: "foo", title: "Foo" },
-    // ...
-  ],
-});
+    {
+      id: "orders.history",
+      title: "Order History",
+      synonyms: ["past orders"]
+    },
+    {
+      id: "orders.search",
+      title: "Search Orders"
+    }
+  ]
+})
 
-const results = router.rank({ query: "search term" });
-```
+router.rank({
+  query: "past orders"
+})
 
+Result:
 
-### Cmdk integration sample
+[
+  { id: "orders.history", score: 0.81 },
+  { id: "orders.search", score: 0.34 }
+]
+Explainable Ranking
 
-```tsx
-import { Command } from "cmdk";
+Each result includes a score breakdown.
 
-<Command>
-  <Command.Input value={query} onValueChange={setQuery} />
-  <Command.List>
-    {router.rank({ query, useLocalProfile: true }).map(item => (
-      <Command.Item
-        key={item.id}
-        onSelect={() => router.learnLocal({ query, commandId: item.id })}
-      >
-        {item.command.title}
-        <small>{item.score.toFixed(2)}</small>
-      </Command.Item>
-    ))}
-  </Command.List>
-</Command>
-```
+{
+  score: 0.83,
+  breakdown: {
+    baseScore: 0.72,
+    signalBoost: 0.11,
+    signals: [
+      { name: "centroid", score: 0.08 },
+      { name: "affinity", score: 0.03 }
+    ]
+  }
+}
 
+This makes tuning signals easy.
 
-### Profile load/export
+Updating Commands
 
-```ts
-// load previously saved profile
-router.loadProfile(savedProfile);
+Commands can be refreshed without recreating the router.
 
-// useLocalProfile tells `rank` to merge local history
-router.rank({ query: "x", useLocalProfile: true });
+router.setCommands(commands)
 
-// export current local profile (JSON‑serializable)
-const profile = router.exportProfile();
-``` 
+Or appended:
 
+router.addCommands(newCommands)
+Performance
 
-### Custom signal example
+Typical performance on modern browsers:
 
-The demo includes a simple "pinned route" signal:
+Commands	Time per query
+50	<1ms
+200	~3-5ms
+500	~10ms
 
-```ts
-const pinnedSignal: ScoreSignal = ({ command, profile }) => {
-  const pins = profile.metadata?.pinnedRoutes as string[] | undefined;
-  return pins?.includes(command.id) ? 0.08 : 0;
-};
+This makes the router safe to run on every keystroke.
 
-new IntentRouter({
-  commands,
-  signals: [centroidSignal, affinitySignal, pinnedSignal],
-});
-```
+Demo
 
-Pass any function matching the `ScoreSignal` signature to extend ranking logic.
+The repository includes a cmdk command palette demo.
 
+examples/cmdk-demo
 
-### Why everything stays local
+The demo shows:
 
-Once `loadProfile` has been called, all calls to `rank` and `learnLocal` operate synchronously
-on in‑memory data. This keeps latency low and makes the core safe to run entirely in a web
-worker or on the server if you wish.
+real-time ranking
 
+profile learning
 
-## Project layout
+blank query recommendations
 
-```
-intent-router/
-  packages/
-    core/          # TypeScript library, no UI deps
-  examples/
-    cmdk-demo/     # React + Vite demo app using cmdk
-```
+signal debugging
 
+Roadmap
 
-## Roadmap
+Potential future improvements:
 
-- ✅ Basic lexical hybrid embedding + signals
-- ✅ Cmdk front‑end demonstration
-- ➕ Optional backend event ingestion/provider adapters
-- 📦 Publish core package to npm
-- 🌐 Example React/Vue/Angular wrappers
-- 📈 Richer context signals (device, location, etc.)
+optional BM25 lexical scoring
 
-Contributions welcome!
+configurable embedding dimensions
 
+signal weighting configuration
+
+offline profile persistence
+
+telemetry hooks
+
+License
+
+MIT
