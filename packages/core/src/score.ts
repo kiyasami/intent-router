@@ -1,4 +1,4 @@
-import { CommandDef, UserProfile, ScoreSignal, ScoreSignalArgs } from "./types";
+import { ScoreSignal, ScoreSignalArgs } from "./types";
 import { centroidSignal, affinitySignal } from "./signals";
 
 /**
@@ -7,12 +7,19 @@ import { centroidSignal, affinitySignal } from "./signals";
  * how the router scores results but can be used standalone for testing or
  * utilities.
  */
-export function computeProfileBoost(
-  args: Omit<ScoreSignalArgs, "commandVec"> & {
-    commandVec?: Float32Array;
-    signals?: ScoreSignal[];
+export function computeProfileBoost<TData = unknown, TMeta = unknown>(
+  args: ScoreSignalArgs<TData, TMeta> & {
+    signals?: readonly ScoreSignal<TData, TMeta>[];
   }
 ): number {
   const { signals = [centroidSignal, affinitySignal] } = args;
-  return signals.reduce((sum, sig) => sum + sig(args as ScoreSignalArgs), 0);
+
+  let total = 0;
+
+  for (const signal of signals) {
+    const result = signal(args);
+    total += typeof result === "number" ? result : result.score;
+  }
+
+  return total;
 }
