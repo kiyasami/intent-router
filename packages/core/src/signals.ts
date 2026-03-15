@@ -26,8 +26,8 @@ export const centroidSignal: ScoreSignal = ({
 
   const centroid = profile?.centroids?.[command.id];
   const count = profile?.counts?.[command.id] ?? 0;
-
-  if (!centroid || count <= 0) {
+  console.log("centroid", centroid)
+  if (!centroid || count <= 0 || centroid.length !== queryVec.length) {
     return { name: "centroid", score: 0 };
   }
 

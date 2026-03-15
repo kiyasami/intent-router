@@ -1,4 +1,4 @@
-import { ScoreSignal, ScoreSignalArgs } from "./types";
+import { ProfileMetadata, ScoreSignal, ScoreSignalArgs } from "./types";
 import { centroidSignal, affinitySignal } from "./signals";
 
 /**
@@ -7,9 +7,12 @@ import { centroidSignal, affinitySignal } from "./signals";
  * how the router scores results but can be used standalone for testing or
  * utilities.
  */
-export function computeProfileBoost<TData = unknown, TMeta = unknown>(
+export function computeProfileBoost<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+>(
   args: ScoreSignalArgs<TData, TMeta> & {
-    signals?: readonly ScoreSignal<TData, TMeta>[];
+  signals?: readonly ScoreSignal<TData, TMeta>[];
   }
 ): number {
   const { signals = [centroidSignal, affinitySignal] } = args;

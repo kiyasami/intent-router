@@ -1,5 +1,14 @@
 export type CommandId = string;
 export type VectorLike = Float32Array | number[];
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue =
+  | JsonPrimitive
+  | JsonObject
+  | JsonValue[];
+export type JsonObject = {
+  [key: string]: JsonValue | undefined;
+};
+export type ProfileMetadata = JsonObject;
 export type CommandDef<TData = unknown> = {
   id: CommandId;
   title: string;
@@ -13,7 +22,7 @@ export type CommandProfile = {
   count?: number;
   affinity?: number;
 };
-export type UserProfile<TMeta = unknown> = {
+export type UserProfile<TMeta extends ProfileMetadata = ProfileMetadata> = {
   centroids?: Record<CommandId, VectorLike>;
   counts?: Record<CommandId, number>;
   affinities?: Record<CommandId, number>;
@@ -46,7 +55,10 @@ export type EmbedOptions = {
   charN?: number;
 };
 
-export type ScoreSignalArgs<TData = unknown, TMeta = unknown> = {
+export type ScoreSignalArgs<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+> = {
   query: string;
   isBlankQuery: boolean;
   queryVec: Float32Array;
@@ -60,11 +72,17 @@ export type ScoreSignalResult = {
   name?: string;
 };
 
-export type ScoreSignal<TData = unknown, TMeta = unknown> = (
+export type ScoreSignal<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+> = (
   args: ScoreSignalArgs<TData, TMeta>
 ) => number | ScoreSignalResult;
 
-export type IntentRouterOptions<TData = unknown, TMeta = unknown> = {
+export type IntentRouterOptions<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+> = {
   commands: readonly CommandDef<TData>[];
   dimension?: number;
   embedOptions?: EmbedOptions;
@@ -84,14 +102,20 @@ export type EmbedGroup = {
   weight: number;
 };
 
-export type PostRankArgs<TData = unknown, TMeta = unknown> = {
+export type PostRankArgs<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+> = {
   query: string;
   isBlankQuery: boolean;
   profile?: UserProfile<TMeta>;
   results: RankedCommand<TData>[];
 };
 
-export type PostRankStage<TData = unknown, TMeta = unknown> = (
+export type PostRankStage<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+> = (
   args: PostRankArgs<TData, TMeta>
 ) => RankedCommand<TData>[];
 

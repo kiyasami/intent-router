@@ -1,5 +1,6 @@
 import { embedGroups } from "./embed";
-import { CommandDef, EmbedOptions } from "./types";
+import { LocalProfileStore, ProfileProvider } from "./provider";
+import { CommandDef, EmbedOptions, UserProfile } from "./types";
 
 export function embedCommand<TData>(
   command: CommandDef<TData>,
@@ -16,3 +17,5 @@ export function embedCommand<TData>(
     options
   );
 }
+
+

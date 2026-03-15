@@ -1,4 +1,7 @@
-import { CommandId, UserProfile, VectorLike } from "./types";
+import { globalConfig } from "./constants";
+import { embed } from "./embed";
+import { LocalProfileStore, ProfileProvider } from "./provider";
+import { CommandId, EmbedOptions, ProfileMetadata, UserProfile, VectorLike } from "./types";
 
 const CONFIDENCE_LOG_SCALE = 4;
 
@@ -8,7 +11,24 @@ export function confidence(count: number): number {
 }
 
 export function toFloat32(vec: VectorLike): Float32Array {
-  return vec instanceof Float32Array ? Float32Array.from(vec) : new Float32Array(vec);
+  if (vec instanceof Float32Array) {
+    return Float32Array.from(vec);
+  }
+
+  if (Array.isArray(vec)) {
+    return new Float32Array(vec);
+  }
+
+  if (vec && typeof vec === "object") {
+    const entries = Object.entries(vec)
+      .filter(([key]) => /^\d+$/.test(key))
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([, value]) => Number(value));
+
+    return new Float32Array(entries);
+  }
+
+  return new Float32Array(0);
 }
 
 export function updateCentroid(
@@ -16,12 +36,9 @@ export function updateCentroid(
   oldCount: number,
   newVec: Float32Array
 ): { centroid: Float32Array; count: number } {
-  if (oldCentroid && oldCentroid.length !== newVec.length) {
-    throw new Error("Centroid dimension mismatch");
-  }
 
-  const count = oldCount + 1;
-  const centroid = oldCentroid
+  const count = oldCount ? oldCount + 1 : 1;
+  const centroid = oldCentroid instanceof Float32Array
     ? Float32Array.from(oldCentroid)
     : new Float32Array(newVec.length);
 
@@ -54,7 +71,7 @@ function cloneCentroids(
   return out;
 }
 
-export function cloneProfile<TMeta = unknown>(
+export function cloneProfile<TMeta extends ProfileMetadata = ProfileMetadata>(
   profile?: UserProfile<TMeta>
 ): UserProfile<TMeta> {
   if (!profile) return {};
@@ -67,33 +84,8 @@ export function cloneProfile<TMeta = unknown>(
   };
 }
 
-export function mergeProfiles<TMeta = unknown>(
-  local?: UserProfile<TMeta>,
-  external?: UserProfile<TMeta>
-): UserProfile<TMeta> {
-  if (!local && !external) return {};
-  if (!local) return cloneProfile(external);
-  if (!external) return cloneProfile(local);
 
-  return {
-    centroids: {
-      ...(cloneCentroids(local.centroids) ?? {}),
-      ...(cloneCentroids(external.centroids) ?? {}),
-    },
-    counts: {
-      ...(local.counts ?? {}),
-      ...(external.counts ?? {}),
-    },
-    affinities: {
-      ...(local.affinities ?? {}),
-      ...(external.affinities ?? {}),
-    },
-    metadata:
-      external.metadata !== undefined ? external.metadata : local.metadata,
-  };
-}
-
-export function learnIntoProfile<TMeta = unknown>(args: {
+export function learnIntoProfile<TMeta extends ProfileMetadata = ProfileMetadata>(args: {
   profile?: UserProfile<TMeta>;
   commandId: CommandId;
   queryVec: Float32Array;
@@ -103,8 +95,8 @@ export function learnIntoProfile<TMeta = unknown>(args: {
   const out = cloneProfile(profile);
 
   const oldCentroid = out.centroids?.[commandId] ?? null;
-  const oldCount = out.counts?.[commandId] ?? 0;
-  const { centroid, count } = updateCentroid(oldCentroid as Float32Array, oldCount, queryVec);
+  const oldCount = out.counts?.[commandId] ?? 0
+  const { centroid, count } =updateCentroid(oldCentroid instanceof Float32Array ? oldCentroid : null, oldCount, queryVec);
 
   out.centroids ??= {};
   out.centroids[commandId] = centroid;
@@ -118,7 +110,7 @@ export function learnIntoProfile<TMeta = unknown>(args: {
   return out;
 }
 
-export function bumpAffinity<TMeta = unknown>(args: {
+export function bumpAffinity<TMeta extends ProfileMetadata = ProfileMetadata>(args: {
   profile?: UserProfile<TMeta>;
   commandId: CommandId;
   affinityDelta?: number;
@@ -130,4 +122,115 @@ export function bumpAffinity<TMeta = unknown>(args: {
   out.affinities[commandId] = (out.affinities[commandId] ?? 0) + affinityDelta;
 
   return out;
+}
+
+export class ProfileManager<TMeta extends ProfileMetadata = ProfileMetadata> {
+  constructor(
+    private store: LocalProfileStore<TMeta>,
+    private provider?: ProfileProvider<TMeta>
+  ) {}
+
+  async init(userId: string): Promise<UserProfile<TMeta>> {
+    const local = this.store.getLocalProfile(userId);
+    if (local) return local;
+
+    if (!this.provider) return {};
+
+    const external = await this.provider.getProfile(userId);
+    const clonedProfile = cloneProfile(external);
+    const validateProfile = this.validateProfileDimensions(clonedProfile);
+    if (validateProfile) {
+      this.store.setLocalProfile(userId, validateProfile);
+      return validateProfile;
+    }
+
+    return {};
+  }
+
+  private validateProfileDimensions(
+    profile?: UserProfile<TMeta>
+  ): UserProfile<TMeta> {
+    if (!profile) return {};
+
+    if (profile.centroids) {
+      for (const [commandId, vec] of Object.entries(profile.centroids)) {
+        if (vec.length !== globalConfig.DEFAULT_DIM) {
+          throw new Error(
+            `Profile centroid dimension mismatch for command "${commandId}". Expected ${globalConfig.DEFAULT_DIM}, got ${vec.length}.`
+          );
+        }
+      }
+    }
+
+    return profile;
+  }
+  getLocal(userId: string): UserProfile<TMeta> | undefined {
+    return this.store.getLocalProfile(userId);
+  }
+
+  setLocal(userId: string, profile: UserProfile<TMeta>): void {
+    this.store.setLocalProfile(userId, profile);
+  }
+
+  resetLocal(userId: string): void {
+    this.store.clearLocalProfile?.(userId);
+  }
+  learnLocal(args: {
+      query: string;
+      commandId: CommandId;
+      affinityDelta?: number;
+    }, blankQuery: boolean, embedOptions: EmbedOptions):void {
+      const { query, commandId, affinityDelta = 1 } = args;
+      const localProfile = blankQuery
+        ? bumpAffinity({
+            profile: this.getLocal("demo-user"),
+            commandId,
+            affinityDelta,
+          })
+        : learnIntoProfile({
+            profile: this.getLocal("demo-user"),
+            commandId,
+            queryVec: embed(query, globalConfig.DEFAULT_DIM, embedOptions),
+            affinityDelta,
+          });
+  
+       this.setLocal("demo-user", localProfile);
+    }
+}
+
+export class LocalStorageProfileStore<
+  TMeta extends ProfileMetadata = ProfileMetadata
+>
+  implements LocalProfileStore<TMeta>
+{
+  getLocalProfile(userId: string): UserProfile<TMeta> | undefined {
+    const raw = localStorage.getItem(`intent-router:${userId}`);
+    return raw ? JSON.parse(raw) : undefined;
+  }
+
+  setLocalProfile(userId: string, profile: UserProfile<TMeta>): void {
+    localStorage.setItem(`intent-router:${userId}`, JSON.stringify(profile));
+  }
+
+  clearLocalProfile(userId: string): void {
+    localStorage.removeItem(`intent-router:${userId}`);
+  }
+}
+
+export class ApiProfileProvider<
+  TMeta extends ProfileMetadata = ProfileMetadata
+>
+  implements ProfileProvider<TMeta>
+{
+  async getProfile(userId: string): Promise<UserProfile<TMeta> | undefined> {
+    try {
+      // const res = await fetch(`/api/profile/${userId}`);
+      // if (!res.ok) return undefined;
+      // return res.json();
+      return undefined;
+    } catch (error) {
+      console.error("Error fetching profile:", error);
+      return undefined;
+    }
+  }
 }

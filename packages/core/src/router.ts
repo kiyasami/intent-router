@@ -11,21 +11,21 @@ import {
   SignalContribution,
   ScoreSignalResult,
   PostRankStage,
+  ProfileMetadata,
 } from "./types";
 import { defaultSignals } from "./signals";
 import {
   bumpAffinity,
   cloneProfile,
   learnIntoProfile,
-  mergeProfiles,
+  ProfileManager,
 } from "./profile";
 import { embedCommand } from "./utils";
 
-export type RankOptions<TMeta = unknown> = {
+export type RankOptions<TMeta extends ProfileMetadata = ProfileMetadata> = {
   query: string;
   profile?: UserProfile<TMeta>;
   limit?: number;
-  useLocalProfile?: boolean;
 };
 
 type RankedInternal<TData = unknown> = RankedCommand<TData> & {
@@ -58,7 +58,10 @@ function normalizeSignalResult(
   };
 }
 
-export class IntentRouter<TData = unknown, TMeta = unknown> {
+export class IntentRouter<
+  TData = unknown,
+  TMeta extends ProfileMetadata = ProfileMetadata
+> {
   private readonly dimension: number;
   private readonly embedOptions: EmbedOptions;
   private readonly signals: readonly ScoreSignal<TData, TMeta>[];
@@ -77,9 +80,11 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
     this.commandIds = new Set();
     this.setCommands(options.commands);
   }
-
+  
   rank(args: RankOptions<TMeta>): RankedCommand<TData>[] {
-    const { query, profile, useLocalProfile = false } = args;
+    const { query, profile } = args;
+    const safeProfile = cloneProfile(profile);
+    console.log("Ranking with profile:", safeProfile);
     const limit = normalizeLimit(args.limit);
     const blankQuery = isBlankQuery(query);
 
@@ -87,9 +92,6 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
       ? new Float32Array(this.dimension)
       : embed(query, this.dimension, this.embedOptions);
 
-    const mergedProfile = useLocalProfile
-      ? this.validateProfileDimensions(mergeProfiles(this.localProfile, profile))
-      : this.validateProfileDimensions(profile);
 
     const initialResults: RankedInternal<TData>[] = this.indexed.map((item) => {
       const baseScore = blankQuery ? 0 : dot(queryVec, item.vec);
@@ -103,7 +105,7 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
             command: item.command,
             commandVec: item.vec,
             baseScore,
-            profile: mergedProfile,
+            profile: safeProfile,
           }),
           index
         )
@@ -137,7 +139,7 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
         stage({
           query,
           isBlankQuery: blankQuery,
-          profile: mergedProfile,
+          profile: profile,
           results,
         }),
       postRankInput
@@ -145,12 +147,11 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
 
     return postRanked.slice(0, limit);
   }
-
-  learnLocal(args: {
+  personalize(args: {
     query: string;
     commandId: CommandId;
     affinityDelta?: number;
-  }): UserProfile<TMeta> {
+  }, profileManager: ProfileManager<TMeta>): void {
     const { query, commandId, affinityDelta = 1 } = args;
 
     if (!this.commandIds.has(commandId)) {
@@ -158,37 +159,14 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
     }
 
     const blankQuery = isBlankQuery(query);
-
-    this.localProfile = blankQuery
-      ? bumpAffinity({
-          profile: this.localProfile,
-          commandId,
-          affinityDelta,
-        })
-      : learnIntoProfile({
-          profile: this.localProfile,
-          commandId,
-          queryVec: embed(query, this.dimension, this.embedOptions),
-          affinityDelta,
-        });
-
-    return cloneProfile(this.localProfile);
+   profileManager.learnLocal({
+      query,
+      commandId,
+      affinityDelta,
+    }, blankQuery, this.embedOptions);
+    
   }
 
-  exportProfile(): UserProfile<TMeta> {
-    return cloneProfile(this.localProfile);
-  }
-
-  loadProfile(profile?: UserProfile<TMeta>): UserProfile<TMeta> {
-    const normalized = cloneProfile(profile ?? {});
-    this.localProfile = this.validateProfileDimensions(normalized);
-    return cloneProfile(this.localProfile);
-  }
-
-  resetProfile(): UserProfile<TMeta> {
-    this.localProfile = {};
-    return cloneProfile(this.localProfile);
-  }
 
   setCommands(commands: readonly CommandDef<TData>[]): void {
     this.indexed = commands.map((command, index) => ({
@@ -213,21 +191,5 @@ export class IntentRouter<TData = unknown, TMeta = unknown> {
     }
   }
 
-  private validateProfileDimensions(
-    profile?: UserProfile<TMeta>
-  ): UserProfile<TMeta> {
-    if (!profile) return {};
-
-    if (profile.centroids) {
-      for (const [commandId, vec] of Object.entries(profile.centroids)) {
-        if (vec.length !== this.dimension) {
-          throw new Error(
-            `Profile centroid dimension mismatch for command "${commandId}". Expected ${this.dimension}, got ${vec.length}.`
-          );
-        }
-      }
-    }
-
-    return profile;
-  }
+  
 }
