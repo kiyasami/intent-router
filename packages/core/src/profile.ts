@@ -1,7 +1,12 @@
-import { globalConfig } from "./constants";
-import { embed } from "./embed";
+import { DEFAULT_DIM, embed } from "./embed";
 import { LocalProfileStore, ProfileProvider } from "./provider";
-import { CommandId, EmbedOptions, ProfileMetadata, UserProfile, VectorLike } from "./types";
+import {
+  CommandId,
+  EmbedOptions,
+  ProfileMetadata,
+  UserProfile,
+  VectorLike,
+} from "./types";
 
 const CONFIDENCE_LOG_SCALE = 4;
 
@@ -36,7 +41,6 @@ export function updateCentroid(
   oldCount: number,
   newVec: Float32Array
 ): { centroid: Float32Array; count: number } {
-
   const count = oldCount ? oldCount + 1 : 1;
   const centroid = oldCentroid instanceof Float32Array
     ? Float32Array.from(oldCentroid)
@@ -71,6 +75,13 @@ function cloneCentroids(
   return out;
 }
 
+function resolveDimension(
+  dimension?: number,
+  embedOptions?: EmbedOptions
+): number {
+  return embedOptions?.dimension ?? dimension ?? DEFAULT_DIM;
+}
+
 export function cloneProfile<TMeta extends ProfileMetadata = ProfileMetadata>(
   profile?: UserProfile<TMeta>
 ): UserProfile<TMeta> {
@@ -84,19 +95,46 @@ export function cloneProfile<TMeta extends ProfileMetadata = ProfileMetadata>(
   };
 }
 
+export function serializeProfile<TMeta extends ProfileMetadata = ProfileMetadata>(
+  profile?: UserProfile<TMeta>
+): UserProfile<TMeta> {
+  if (!profile) return {};
 
-export function learnIntoProfile<TMeta extends ProfileMetadata = ProfileMetadata>(args: {
-  profile?: UserProfile<TMeta>;
-  commandId: CommandId;
-  queryVec: Float32Array;
-  affinityDelta?: number;
-}): UserProfile<TMeta> {
+  const centroids = profile.centroids
+    ? Object.fromEntries(
+        Object.entries(profile.centroids).map(([commandId, vec]) => [
+          commandId,
+          Array.from(toFloat32(vec)),
+        ])
+      )
+    : undefined;
+
+  return {
+    centroids,
+    counts: profile.counts ? { ...profile.counts } : undefined,
+    affinities: profile.affinities ? { ...profile.affinities } : undefined,
+    metadata: profile.metadata,
+  };
+}
+
+export function learnIntoProfile<TMeta extends ProfileMetadata = ProfileMetadata>(
+  args: {
+    profile?: UserProfile<TMeta>;
+    commandId: CommandId;
+    queryVec: Float32Array;
+    affinityDelta?: number;
+  }
+): UserProfile<TMeta> {
   const { profile, commandId, queryVec, affinityDelta = 1 } = args;
   const out = cloneProfile(profile);
 
   const oldCentroid = out.centroids?.[commandId] ?? null;
-  const oldCount = out.counts?.[commandId] ?? 0
-  const { centroid, count } =updateCentroid(oldCentroid instanceof Float32Array ? oldCentroid : null, oldCount, queryVec);
+  const oldCount = out.counts?.[commandId] ?? 0;
+  const { centroid, count } = updateCentroid(
+    oldCentroid instanceof Float32Array ? oldCentroid : null,
+    oldCount,
+    queryVec
+  );
 
   out.centroids ??= {};
   out.centroids[commandId] = centroid;
@@ -130,33 +168,50 @@ export class ProfileManager<TMeta extends ProfileMetadata = ProfileMetadata> {
     private provider?: ProfileProvider<TMeta>
   ) {}
 
-  async init(userId: string): Promise<UserProfile<TMeta>> {
+  async init(
+    userId: string,
+    options?: { dimension?: number }
+  ): Promise<UserProfile<TMeta>> {
+    return this.loadProfile(userId, options);
+  }
+
+  async loadProfile(
+    userId: string,
+    options?: { dimension?: number }
+  ): Promise<UserProfile<TMeta>> {
     const local = this.store.getLocalProfile(userId);
-    if (local) return local;
+    if (local) {
+      return this.validateProfileDimensions(local, options?.dimension);
+    }
 
     if (!this.provider) return {};
 
     const external = await this.provider.getProfile(userId);
     const clonedProfile = cloneProfile(external);
-    const validateProfile = this.validateProfileDimensions(clonedProfile);
-    if (validateProfile) {
-      this.store.setLocalProfile(userId, validateProfile);
-      return validateProfile;
+    const validatedProfile = this.validateProfileDimensions(
+      clonedProfile,
+      options?.dimension
+    );
+
+    if (validatedProfile) {
+      this.store.setLocalProfile(userId, validatedProfile);
+      return validatedProfile;
     }
 
     return {};
   }
 
   private validateProfileDimensions(
-    profile?: UserProfile<TMeta>
+    profile?: UserProfile<TMeta>,
+    dimension = DEFAULT_DIM
   ): UserProfile<TMeta> {
     if (!profile) return {};
 
     if (profile.centroids) {
       for (const [commandId, vec] of Object.entries(profile.centroids)) {
-        if (vec.length !== globalConfig.DEFAULT_DIM) {
+        if (vec.length !== dimension) {
           throw new Error(
-            `Profile centroid dimension mismatch for command "${commandId}". Expected ${globalConfig.DEFAULT_DIM}, got ${vec.length}.`
+            `Profile centroid dimension mismatch for command "${commandId}". Expected ${dimension}, got ${vec.length}.`
           );
         }
       }
@@ -164,38 +219,76 @@ export class ProfileManager<TMeta extends ProfileMetadata = ProfileMetadata> {
 
     return profile;
   }
+
   getLocal(userId: string): UserProfile<TMeta> | undefined {
     return this.store.getLocalProfile(userId);
   }
 
-  setLocal(userId: string, profile: UserProfile<TMeta>): void {
-    this.store.setLocalProfile(userId, profile);
+  exportProfile(userId: string): UserProfile<TMeta> {
+    return serializeProfile(this.getLocal(userId));
+  }
+
+  importProfile(
+    userId: string,
+    profile: UserProfile<TMeta>,
+    options?: { dimension?: number }
+  ): UserProfile<TMeta> {
+    const validated = this.validateProfileDimensions(
+      cloneProfile(profile),
+      options?.dimension
+    );
+    this.store.setLocalProfile(userId, validated);
+    return validated;
+  }
+
+  setLocal(
+    userId: string,
+    profile: UserProfile<TMeta>,
+    options?: { dimension?: number }
+  ): void {
+    this.store.setLocalProfile(
+      userId,
+      this.validateProfileDimensions(profile, options?.dimension)
+    );
   }
 
   resetLocal(userId: string): void {
     this.store.clearLocalProfile?.(userId);
   }
-  learnLocal(args: {
+
+  learnLocal(
+    args: {
+      userId: string;
       query: string;
       commandId: CommandId;
       affinityDelta?: number;
-    }, blankQuery: boolean, embedOptions: EmbedOptions):void {
-      const { query, commandId, affinityDelta = 1 } = args;
-      const localProfile = blankQuery
-        ? bumpAffinity({
-            profile: this.getLocal("demo-user"),
-            commandId,
-            affinityDelta,
-          })
-        : learnIntoProfile({
-            profile: this.getLocal("demo-user"),
-            commandId,
-            queryVec: embed(query, globalConfig.DEFAULT_DIM, embedOptions),
-            affinityDelta,
-          });
-  
-       this.setLocal("demo-user", localProfile);
-    }
+    },
+    options: {
+      blankQuery?: boolean;
+      dimension?: number;
+      embedOptions?: EmbedOptions;
+    } = {}
+  ): UserProfile<TMeta> {
+    const { userId, query, commandId, affinityDelta = 1 } = args;
+    const { blankQuery = query.trim().length === 0, dimension, embedOptions } = options;
+    const resolvedDimension = resolveDimension(dimension, embedOptions);
+
+    const localProfile = blankQuery
+      ? bumpAffinity({
+          profile: this.getLocal(userId),
+          commandId,
+          affinityDelta,
+        })
+      : learnIntoProfile({
+          profile: this.getLocal(userId),
+          commandId,
+          queryVec: embed(query, resolvedDimension, embedOptions),
+          affinityDelta,
+        });
+
+    this.setLocal(userId, localProfile, { dimension: resolvedDimension });
+    return localProfile;
+  }
 }
 
 export class LocalStorageProfileStore<
@@ -205,11 +298,15 @@ export class LocalStorageProfileStore<
 {
   getLocalProfile(userId: string): UserProfile<TMeta> | undefined {
     const raw = localStorage.getItem(`intent-router:${userId}`);
-    return raw ? JSON.parse(raw) : undefined;
+    if (!raw) return undefined;
+    return cloneProfile(JSON.parse(raw) as UserProfile<TMeta>);
   }
 
   setLocalProfile(userId: string, profile: UserProfile<TMeta>): void {
-    localStorage.setItem(`intent-router:${userId}`, JSON.stringify(profile));
+    localStorage.setItem(
+      `intent-router:${userId}`,
+      JSON.stringify(serializeProfile(profile))
+    );
   }
 
   clearLocalProfile(userId: string): void {

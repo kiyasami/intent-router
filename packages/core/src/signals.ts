@@ -1,5 +1,6 @@
 import { dot } from "./embed";
 import { confidence } from "./profile";
+import { computeRouteParamBoost } from "./route";
 import { CommandId, ScoreSignal } from "./types";
 
 const CENTROID_SIGNAL_WEIGHT = 0.2;
@@ -26,7 +27,6 @@ export const centroidSignal: ScoreSignal = ({
 
   const centroid = profile?.centroids?.[command.id];
   const count = profile?.counts?.[command.id] ?? 0;
-  console.log("centroid", centroid)
   if (!centroid || count <= 0 || centroid.length !== queryVec.length) {
     return { name: "centroid", score: 0 };
   }
@@ -64,6 +64,17 @@ export const pinnedRouteSignal: ScoreSignal = ({ command, profile }) => {
   return {
     name: "pinned",
     score: pins.includes(command.id) ? PINNED_ROUTE_BOOST : 0,
+  };
+};
+
+export const routeParamSignal: ScoreSignal = ({ command, query, isBlankQuery }) => {
+  if (isBlankQuery) {
+    return { name: "route_params", score: 0 };
+  }
+
+  return {
+    name: "route_params",
+    score: computeRouteParamBoost(command, query),
   };
 };
 

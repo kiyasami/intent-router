@@ -53,6 +53,96 @@ export type EmbedOptions = {
   wordWeight?: number;
   charWeight?: number;
   charN?: number;
+  stopWords?: readonly string[];
+};
+
+export type RouteQueryValue = string | number | boolean | null | undefined;
+
+export type RouteParamKind =
+  | "number"
+  | "string"
+  | "identifier"
+  | "po_number"
+  | "item_number"
+  | "sku"
+  | "invoice_number"
+  | "email"
+  | "phone";
+
+export type RouteParamMatchSource = "custom" | "pattern" | "kind";
+
+export type RouteParamMatch = {
+  value: string;
+  kind?: RouteParamKind;
+  score?: number;
+  start?: number;
+  end?: number;
+};
+
+export type RouteParamParser = (rawValue: string) => RouteQueryValue;
+export type RouteParamValidator = (rawValue: string) => boolean;
+
+export type RouteParamMatchContext = {
+  query: string;
+  queryTokens: readonly string[];
+};
+
+export type RouteParamMatcher = (
+  args: RouteParamMatchContext & {
+    spec: RouteParamSpec;
+  }
+) => RouteParamMatch | readonly RouteParamMatch[] | undefined;
+
+export type RouteParamSpec = {
+  name: string;
+  kind: RouteParamKind | readonly RouteParamKind[];
+  required?: boolean;
+  queryKey?: string;
+  pathKey?: string;
+  hints?: readonly string[];
+  specificity?: number;
+  pattern?: RegExp;
+  match?: RouteParamMatcher;
+  parse?: RouteParamParser;
+  validate?: RouteParamValidator;
+};
+
+export type RouteTarget = {
+  pathname: string;
+  query?: Record<string, RouteQueryValue>;
+  hash?: string;
+};
+
+export type RouteCommandData = {
+  route: RouteTarget;
+  params?: readonly RouteParamSpec[];
+  routeLabel?: string;
+};
+
+export type RouteCommandDef<
+  TData extends RouteCommandData = RouteCommandData
+> = CommandDef<TData>;
+
+export type ResolvedRouteParam = {
+  name: string;
+  value: string;
+  routeValue: RouteQueryValue;
+  kind: RouteParamKind;
+  score: number;
+  specificity: number;
+  hintMatched: boolean;
+  source: RouteParamMatchSource;
+  queryKey?: string;
+  pathKey?: string;
+};
+
+export type RouteResolution = {
+  pathname: string;
+  query: Record<string, RouteQueryValue>;
+  hash?: string;
+  href: string;
+  label: string;
+  params: ResolvedRouteParam[];
 };
 
 export type ScoreSignalArgs<

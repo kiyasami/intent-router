@@ -14,12 +14,7 @@ import {
   ProfileMetadata,
 } from "./types";
 import { defaultSignals } from "./signals";
-import {
-  bumpAffinity,
-  cloneProfile,
-  learnIntoProfile,
-  ProfileManager,
-} from "./profile";
+import { cloneProfile, ProfileManager } from "./profile";
 import { embedCommand } from "./utils";
 
 export type RankOptions<TMeta extends ProfileMetadata = ProfileMetadata> = {
@@ -68,11 +63,13 @@ export class IntentRouter<
   private readonly postRankStages: readonly PostRankStage<TData, TMeta>[];
   private indexed: IndexedCommand<TData>[];
   private commandIds: Set<CommandId>;
-  private localProfile: UserProfile<TMeta> = {};
 
   constructor(options: IntentRouterOptions<TData, TMeta>) {
-    this.dimension = options.dimension ?? DEFAULT_DIM;
-    this.embedOptions = options.embedOptions ?? {};
+    this.dimension = options.embedOptions?.dimension ?? options.dimension ?? DEFAULT_DIM;
+    this.embedOptions = {
+      ...(options.embedOptions ?? {}),
+      dimension: this.dimension,
+    };
     this.signals =
       options.signals ?? (defaultSignals as readonly ScoreSignal<TData, TMeta>[]);
     this.postRankStages = options.postRankStages ?? [];
@@ -80,18 +77,16 @@ export class IntentRouter<
     this.commandIds = new Set();
     this.setCommands(options.commands);
   }
-  
+
   rank(args: RankOptions<TMeta>): RankedCommand<TData>[] {
     const { query, profile } = args;
     const safeProfile = cloneProfile(profile);
-    console.log("Ranking with profile:", safeProfile);
     const limit = normalizeLimit(args.limit);
     const blankQuery = isBlankQuery(query);
 
     const queryVec = blankQuery
       ? new Float32Array(this.dimension)
       : embed(query, this.dimension, this.embedOptions);
-
 
     const initialResults: RankedInternal<TData>[] = this.indexed.map((item) => {
       const baseScore = blankQuery ? 0 : dot(queryVec, item.vec);
@@ -132,14 +127,16 @@ export class IntentRouter<
       (a, b) => b.score - a.score || a._index - b._index
     );
 
-    const postRankInput: RankedCommand<TData>[] = sorted.map(({ _index, ...result }) => result);
+    const postRankInput: RankedCommand<TData>[] = sorted.map(
+      ({ _index, ...result }) => result
+    );
 
     const postRanked = this.postRankStages.reduce(
       (results, stage) =>
         stage({
           query,
           isBlankQuery: blankQuery,
-          profile: profile,
+          profile,
           results,
         }),
       postRankInput
@@ -147,26 +144,40 @@ export class IntentRouter<
 
     return postRanked.slice(0, limit);
   }
-  personalize(args: {
-    query: string;
-    commandId: CommandId;
-    affinityDelta?: number;
-  }, profileManager: ProfileManager<TMeta>): void {
-    const { query, commandId, affinityDelta = 1 } = args;
+
+  personalize(
+    args: {
+      userId: string;
+      query: string;
+      commandId: CommandId;
+      affinityDelta?: number;
+    },
+    profileManager: ProfileManager<TMeta>
+  ): void {
+    const { userId, query, commandId, affinityDelta = 1 } = args;
 
     if (!this.commandIds.has(commandId)) {
       throw new Error(`Unknown commandId: ${commandId}`);
     }
 
-    const blankQuery = isBlankQuery(query);
-   profileManager.learnLocal({
-      query,
-      commandId,
-      affinityDelta,
-    }, blankQuery, this.embedOptions);
-    
+    profileManager.learnLocal(
+      {
+        userId,
+        query,
+        commandId,
+        affinityDelta,
+      },
+      {
+        blankQuery: isBlankQuery(query),
+        dimension: this.dimension,
+        embedOptions: this.embedOptions,
+      }
+    );
   }
 
+  getDimension(): number {
+    return this.dimension;
+  }
 
   setCommands(commands: readonly CommandDef<TData>[]): void {
     this.indexed = commands.map((command, index) => ({
@@ -190,6 +201,4 @@ export class IntentRouter<
       this.commandIds.add(command.id);
     }
   }
-
-  
 }

@@ -1,31 +1,52 @@
 import * as React from "react";
 import { Command } from "cmdk";
-import { ApiProfileProvider, LocalStorageProfileStore, ProfileManager, RankedCommand, UserProfile } from "@intent-router/core";
+import {
+  ApiProfileProvider,
+  LocalStorageProfileStore,
+  ProfileManager,
+  RankedCommand,
+  RouteCommandData,
+  UserProfile,
+  resolveCommandRoute,
+} from "@intent-router/core";
 import { DEFAULT_LIST_LIMIT, STORAGE_KEY } from "./constants";
 import { router } from "./router";
 import { styles } from "./styles";
 import { scenarioQueries } from "./commands";
 import { pretty, scoreClass } from "./utils";
-// import {ProfileProvider} from "@intent-router/core";
+
+function formatSignalName(name: string): string {
+  return name.replace(/_/g, " ");
+}
+
 export default function App() {
+  const userId = "demo-user";
   const profileStore = React.useMemo(() => new LocalStorageProfileStore(), []);
   const profileProvider = React.useMemo(() => new ApiProfileProvider(), []);
   const profileManager = React.useMemo(
     () => new ProfileManager(profileStore, profileProvider),
     [profileStore, profileProvider]
   );
+
   React.useEffect(() => {
-    const LocalProfile = profileManager.getLocal("demo-user");
-    profileManager.init("demo-user").then((profile) => {
-      if (!LocalProfile) profileManager.setLocal("demo-user", profile);
-    });
-  }, []);
+    const existingProfile = profileManager.getLocal(userId);
+    profileManager
+      .loadProfile(userId, { dimension: router.getDimension() })
+      .then((profile) => {
+        if (!existingProfile) {
+          profileManager.setLocal(userId, profile, {
+            dimension: router.getDimension(),
+          });
+        }
+      });
+  }, [profileManager, userId]);
+
   const [query, setQuery] = React.useState("");
   const [refreshed, setRefreshed] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
-  const [selectedResult, setSelectedResult] = React.useState<RankedCommand | null>(null);
+  const [selectedResult, setSelectedResult] = React.useState<RankedCommand<RouteCommandData> | null>(null);
   const [useLocalProfile, setUseLocalProfile] = React.useState(true);
-  const storedProfile = profileManager.getLocal("demo-user");
+  const storedProfile = profileManager.getLocal(userId);
   const localProfile = React.useMemo<UserProfile>(() => {
     if (!storedProfile || !useLocalProfile) {
       return {
@@ -37,8 +58,9 @@ export default function App() {
         },
       };
     }
+
     return storedProfile;
-  }, [useLocalProfile, storedProfile, refreshed]);
+  }, [refreshed, storedProfile, useLocalProfile]);
 
   const localCounts = localProfile.counts ?? {};
   const localAffinities = localProfile.affinities ?? {};
@@ -46,49 +68,64 @@ export default function App() {
   const [limit, setLimit] = React.useState(DEFAULT_LIST_LIMIT);
   const [learnAffinityDelta, setLearnAffinityDelta] = React.useState(1);
 
-  const results = React.useMemo(() => {
-    console.log("aboveprofile", localProfile)
-    return router.rank({
-      query,
-      limit,
-      profile: localProfile 
-    });
-  }, [query, limit, localProfile]);
+  const results = React.useMemo(
+    () =>
+      router.rank({
+        query,
+        limit,
+        profile: localProfile,
+      }),
+    [limit, localProfile, query]
+  );
 
+  const selectedRoute = React.useMemo(
+    () =>
+      selectedResult
+        ? resolveCommandRoute(selectedResult.command, query)
+        : null,
+    [query, selectedResult]
+  );
 
   React.useEffect(() => {
     const next = results.find((r) => r.id === selectedId) ?? null;
     setSelectedResult(next);
-  }, [ selectedId]);
+  }, [results, selectedId]);
 
   const refreshLocalProfile = React.useCallback(async () => {
-    const updated = await profileManager.init("demo-user");
-    if (updated) {
-      profileManager.setLocal("demo-user", updated);
-    }
-    setRefreshed((v) => !v);
-  }, []);
+    const updated = await profileManager.loadProfile(userId, {
+      dimension: router.getDimension(),
+    });
+
+    profileManager.setLocal(userId, updated, {
+      dimension: router.getDimension(),
+    });
+    setRefreshed((value) => !value);
+  }, [profileManager, userId]);
 
   const handleSelect = React.useCallback(
     (id: string) => {
       setSelectedId(id);
-      router.personalize({
-        query,
-        commandId: id,
-        affinityDelta: learnAffinityDelta,
-      }, profileManager);
-
+      router.personalize(
+        {
+          userId,
+          query,
+          commandId: id,
+          affinityDelta: learnAffinityDelta,
+        },
+        profileManager
+      );
+      setRefreshed((value) => !value);
     },
-    [query, learnAffinityDelta]
+    [learnAffinityDelta, profileManager, query, userId]
   );
 
   const handleResetLocal = React.useCallback(() => {
-   profileManager.resetLocal("demo-user");
+    profileManager.resetLocal(userId);
     refreshLocalProfile();
     setSelectedId(null);
     setSelectedResult(null);
     localStorage.removeItem(STORAGE_KEY);
-  }, [refreshLocalProfile]);
+  }, [profileManager, refreshLocalProfile, userId]);
 
   const togglePin = React.useCallback(
     (commandId: string) => {
@@ -109,17 +146,17 @@ export default function App() {
         },
       };
 
-      profileManager.setLocal("demo-user", next);
-      refreshLocalProfile();
+      profileManager.setLocal(userId, next, {
+        dimension: router.getDimension(),
+      });
+      setRefreshed((value) => !value);
     },
-    [refreshLocalProfile]
+    [localProfile, profileManager, userId]
   );
 
   const localPins = Array.isArray(localProfile.metadata?.pinnedRoutes)
     ? (localProfile.metadata?.pinnedRoutes as string[])
     : [];
-
-  
 
   return (
     <div style={styles.page}>
@@ -217,6 +254,7 @@ export default function App() {
                   results.map((item, index) => {
                     const pinned = localPins.includes(item.id);
                     const selected = selectedId === item.id;
+                    const resolvedRoute = resolveCommandRoute(item.command, query);
 
                     return (
                       <Command.Item
@@ -265,9 +303,25 @@ export default function App() {
                               local affinity: {localAffinities[item.id] ?? 0}
                             </span>
                             <span>
-                              centroid: {localCentroids[item.id] ? "yes" : "no"}
+                              centroid: {(localCounts[item.id] ?? 0) > 0 ? "yes" : "no"}
                             </span>
                             <span>pinned: {pinned ? "yes" : "no"}</span>
+                          </div>
+
+                          <div style={styles.signalList}>
+                            {item.breakdown.signals.map((signal) => (
+                              <span
+                                key={signal.name}
+                                style={{
+                                  ...styles.signalPill,
+                                  ...(signal.score > 0
+                                    ? styles.signalPillActive
+                                    : styles.signalPillMuted),
+                                }}
+                              >
+                                {formatSignalName(signal.name)} {signal.score.toFixed(3)}
+                              </span>
+                            ))}
                           </div>
 
                           <div style={styles.metaRow}>
@@ -276,7 +330,10 @@ export default function App() {
                             </span>
                             <span>
                               synonyms:{" "}
-                              {(item.command.synonyms ?? []).join(", ") || "—"}
+                              {(item.command.synonyms ?? []).join(", ") || "-"}
+                            </span>
+                            <span>
+                              route: {resolvedRoute?.href ?? item.command.data?.route.pathname ?? "-"}
                             </span>
                           </div>
                         </div>
@@ -289,7 +346,7 @@ export default function App() {
                             togglePin(item.id);
                           }}
                         >
-                          {pinned ? "★ unpin" : "☆ pin"}
+                          {pinned ? "unpin" : "pin"}
                         </button>
                       </Command.Item>
                     );
@@ -339,7 +396,43 @@ export default function App() {
                 </div>
                 <div>
                   <div style={styles.kvLabel}>Has centroid</div>
-                  <div>{localCentroids[selectedResult.id] ? "yes" : "no"}</div>
+                  <div>{(localCounts[selectedResult.id] ?? 0) > 0 ? "yes" : "no"}</div>
+                </div>
+                <div>
+                  <div style={styles.kvLabel}>Resolved route</div>
+                  <div>{selectedRoute?.href ?? selectedResult.command.data?.route.pathname ?? "-"}</div>
+                </div>
+                <div>
+                  <div style={styles.kvLabel}>Route label</div>
+                  <div>{selectedRoute?.label ?? selectedResult.command.title}</div>
+                </div>
+                <div>
+                  <div style={styles.kvLabel}>Route params</div>
+                  <div>
+                    {selectedRoute?.params.length
+                      ? selectedRoute.params
+                          .map((param) => `${param.name}=${param.value} [${param.source}]`)
+                          .join(", ")
+                      : "-"}
+                  </div>
+                </div>
+                <div style={styles.detailWide}>
+                  <div style={styles.kvLabel}>Signal contributions</div>
+                  <div style={styles.signalList}>
+                    {selectedResult.breakdown.signals.map((signal) => (
+                      <span
+                        key={signal.name}
+                        style={{
+                          ...styles.signalPill,
+                          ...(signal.score > 0
+                            ? styles.signalPillActive
+                            : styles.signalPillMuted),
+                        }}
+                      >
+                        {formatSignalName(signal.name)} {signal.score.toFixed(6)}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -368,5 +461,3 @@ export default function App() {
     </div>
   );
 }
-
-

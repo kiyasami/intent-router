@@ -1,163 +1,202 @@
 # Intent Router
 
-A lightweight ranking engine for command palettes and application navigation. It plugs into UI libraries like `cmdk` but does **not** provide any visual components itself; the focus is on a fast, predictable, and local ranking layer that can be used in browser or node contexts.
+Intent Router is a lightweight, local-first ranking engine for command palettes and app navigation. It plugs into UI libraries like `cmdk`, but it does not ship UI components. The package is focused on fast in-memory ranking, simple personalization, and predictable behavior in browser or server environments.
 
-> “A frontend‑first ranking engine for command palettes and route launchers.”
+## Why use it
 
+- Local, synchronous ranking after commands and profiles are loaded
+- Hybrid lexical embeddings using words and character n-grams
+- Pluggable score signals for personalization and app-specific boosts
+- Optional profile persistence through your own store or provider
+- No backend requirement for the core ranking loop
 
-## Why use Intent Router?
+## How it works
 
-- **Local, synchronous scoring.** Once a profile is loaded, all ranking is done in-memory with no further I/O.
-- **Hybrid lexical embedding.** Combines full‑word tokens (higher weight) with character n‑grams (lower weight) for robust matching.
-- **Extensible signals.** Built‑in profile boosts plus an easy API for custom ranking signals.
-- **User profiles.** Optional centroid vectors, counts, affinities, and metadata allow your app to personalize results over time.
-- **Zero backend assumptions.** The core package has no storage dependencies; you can plug in your own provider if desired.
+1. Define the commands or routes you want to rank.
+2. Intent Router embeds each command into a fixed-size vector.
+3. User queries are embedded with the same model.
+4. Results are ranked by vector similarity plus any configured signals.
+5. After a user selects a result, you can learn from that event and persist the updated profile.
 
+## Installation
 
-## Architecture
-
-1. **Command definitions** supply the static actions/routes you want to rank.
-2. A query string is embedded using the lexical model.
-3. Each command is pre‑embedded and stored in the router.
-4. The router computes a base score (dot product) and applies any configured signals.
-5. Results are returned to the caller; your UI layer (e.g. `cmdk`) renders them.
-6. When the user selects a command, your app can call `router.learnLocal(...)` to update the in‑memory profile and optionally persist events.
-
-
-## Embedding model
-
-- Text is normalized (lowercase, trimmed, collapsed whitespace).
-- Word tokens are extracted via alphanumeric splitting; hashed with an `w:` namespace.
-- Character n‑grams (default length 3) are generated over `__text__`; hashed with a `c:` namespace.
-- Both token types map into a fixed‑dimensional `Float32Array` (default 1024), with separate weights.
-- The resulting vector is L2‑normalized for cosine‑style dot products.
-
-
-## Profile model
-
-```ts
-interface UserProfile {
-  centroids?: Record<string, number[]>; // command -> normalized vector
-  counts?: Record<string, number>;      // number of samples used
-  affinities?: Record<string, number>;  // recency/frequency counter
-  metadata?: Record<string, unknown>;   // arbitrary app data
-}
-```
-
-Centroids compress the history of queries that led to each command; `counts` drive a confidence score.
-Affinity values provide a simple scalar boost. Metadata can hold anything your app needs (e.g. pinned routes).
-
-Profiles can be learned locally (`router.learnLocal`), loaded from a backend, merged, exported, and serialized to JSON.
-
-
-## Getting started
-
-Install using your workspace manager of choice; the repo is already configured with workspaces:
+Build the core package first:
 
 ```bash
-npm install      # or pnpm install
-cd examples/cmdk-demo
-npm run dev       # start the demo with Vite
+cd packages/core
+npm run build
 ```
 
+Then run the demo if you want to try the package in a UI:
 
-### Basic usage
+```bash
+cd examples/cmdk-demo
+npm run dev
+```
+
+## Basic ranking
 
 ```ts
 import { IntentRouter } from "@intent-router/core";
 
 const router = new IntentRouter({
   commands: [
-    { id: "foo", title: "Foo" },
-    // ...
+    { id: "orders.track", title: "Track order" },
+    { id: "inventory.search", title: "Search inventory" },
   ],
 });
 
-const results = router.rank({ query: "search term" });
+const results = router.rank({ query: "where is my order" });
 ```
 
+You can also pass custom embedding options such as stop words:
 
-### Cmdk integration sample
-
-```tsx
-import { Command } from "cmdk";
-
-<Command>
-  <Command.Input value={query} onValueChange={setQuery} />
-  <Command.List>
-    {router.rank({ query, useLocalProfile: true }).map(item => (
-      <Command.Item
-        key={item.id}
-        onSelect={() => router.learnLocal({ query, commandId: item.id })}
-      >
-        {item.command.title}
-        <small>{item.score.toFixed(2)}</small>
-      </Command.Item>
-    ))}
-  </Command.List>
-</Command>
+```ts
+const router = new IntentRouter({
+  commands,
+  embedOptions: {
+    stopWords: ["a", "an", "the", "by", "for", "of", "to"],
+  },
+});
 ```
 
-
-### Profile load/export
-
-```ts
-// load previously saved profile
-router.loadProfile(savedProfile);
-
-// useLocalProfile tells `rank` to merge local history
-router.rank({ query: "x", useLocalProfile: true });
-
-// export current local profile (JSON‑serializable)
-const profile = router.exportProfile();
-``` 
-
-
-### Custom signal example
-
-The demo includes a simple "pinned route" signal:
+## Personalization flow
 
 ```ts
+import {
+  IntentRouter,
+  LocalStorageProfileStore,
+  ProfileManager,
+} from "@intent-router/core";
+
+const userId = "alice";
+
+const router = new IntentRouter({
+  commands,
+  dimension: 1024,
+});
+
+const profileManager = new ProfileManager(new LocalStorageProfileStore());
+
+const profile = await profileManager.loadProfile(userId, {
+  dimension: router.getDimension(),
+});
+
+const results = router.rank({
+  query: "track my shipment",
+  profile,
+});
+
+router.personalize(
+  {
+    userId,
+    query: "track my shipment",
+    commandId: results[0].id,
+  },
+  profileManager
+);
+
+const exportedProfile = profileManager.exportProfile(userId);
+```
+
+## Route-aware commands
+
+You can attach deep-link metadata and param expectations to commands. Intent Router can then extract likely values from the query, boost matching routes, and help you resolve a final href.
+
+```ts
+import {
+  RouteCommandDef,
+  createRouteCommandData,
+  defineRouteCommand,
+} from "@intent-router/core";
+
+const command: RouteCommandDef = defineRouteCommand({
+  id: "orders.searchByPo",
+  title: "Search Orders by PO",
+  data: createRouteCommandData(
+    { pathname: "/orders/search" },
+    [
+      {
+        name: "po",
+        kind: "po_number",
+        queryKey: "po",
+        hints: ["po", "purchase order"],
+      },
+    ]
+  ),
+});
+```
+
+For more specific extraction you can use regexes, custom matchers, or the built-in helpers:
+
+```ts
+import { routeParamMatchers } from "@intent-router/core";
+
+const command = {
+  id: "products.sku",
+  title: "Search by SKU",
+  data: createRouteCommandData(
+    { pathname: "/products/search" },
+    [routeParamMatchers.sku()]
+  ),
+};
+```
+
+## Profile shape
+
+```ts
+interface UserProfile {
+  centroids?: Record<string, number[]>;
+  counts?: Record<string, number>;
+  affinities?: Record<string, number>;
+  metadata?: Record<string, unknown>;
+}
+```
+
+- `centroids` store learned vectors per command
+- `counts` track how many samples contributed to each centroid
+- `affinities` provide a simple scalar preference boost
+- `metadata` lets your app attach its own fields, such as pinned routes
+
+`ProfileManager.exportProfile()` returns a JSON-safe structure, so persisting profiles is straightforward.
+
+## Custom signals
+
+```ts
+import {
+  affinitySignal,
+  centroidSignal,
+  IntentRouter,
+  ScoreSignal,
+} from "@intent-router/core";
+
 const pinnedSignal: ScoreSignal = ({ command, profile }) => {
-  const pins = profile.metadata?.pinnedRoutes as string[] | undefined;
-  return pins?.includes(command.id) ? 0.08 : 0;
+  const pins = profile?.metadata?.pinnedRoutes as string[] | undefined;
+  return pins?.includes(command.id)
+    ? { name: "pinned", score: 0.08 }
+    : { name: "pinned", score: 0 };
 };
 
-new IntentRouter({
+const router = new IntentRouter({
   commands,
   signals: [centroidSignal, affinitySignal, pinnedSignal],
 });
 ```
 
-Pass any function matching the `ScoreSignal` signature to extend ranking logic.
+## Package layout
 
-
-### Why everything stays local
-
-Once `loadProfile` has been called, all calls to `rank` and `learnLocal` operate synchronously
-on in‑memory data. This keeps latency low and makes the core safe to run entirely in a web
-worker or on the server if you wish.
-
-
-## Project layout
-
-```
+```text
 intent-router/
   packages/
-    core/          # TypeScript library, no UI deps
+    core/        TypeScript library
   examples/
-    cmdk-demo/     # React + Vite demo app using cmdk
+    cmdk-demo/   React + Vite demo
 ```
 
+## Current focus
 
-## Roadmap
+- Stable local-first ranking and personalization
+- Publishable core package output in `packages/core/dist`
+- Demo app for trying ranking behavior and profile learning
 
-- ✅ Basic lexical hybrid embedding + signals
-- ✅ Cmdk front‑end demonstration
-- ➕ Optional backend event ingestion/provider adapters
-- 📦 Publish core package to npm
-- 🌐 Example React/Vue/Angular wrappers
-- 📈 Richer context signals (device, location, etc.)
-
-Contributions welcome!
-
+Contributions welcome.

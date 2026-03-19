@@ -165,6 +165,28 @@ export const styles: Record<string, React.CSSProperties> = {
     color: "#cbd5e1",
     marginTop: 8,
   },
+  signalList: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+  },
+  signalPill: {
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 11,
+    border: "1px solid #334155",
+  },
+  signalPillActive: {
+    background: "rgba(56,189,248,0.14)",
+    color: "#bae6fd",
+    border: "1px solid rgba(56,189,248,0.35)",
+  },
+  signalPillMuted: {
+    background: "rgba(148,163,184,0.08)",
+    color: "#94a3b8",
+    border: "1px solid rgba(148,163,184,0.2)",
+  },
   metaRow: {
     display: "flex",
     flexWrap: "wrap",
@@ -248,6 +270,9 @@ export const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 12,
+  },
+  detailWide: {
+    gridColumn: "1 / -1",
   },
   kvLabel: {
     fontSize: 12,

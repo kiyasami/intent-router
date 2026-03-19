@@ -1,9 +1,9 @@
 import { EmbedGroup, EmbedOptions } from "./types";
 
 export const DEFAULT_DIM = 1024;
-const DEFAULT_WORD_WEIGHT = 3;
-const DEFAULT_CHAR_WEIGHT = 1;
-const DEFAULT_CHAR_N = 3;
+export const DEFAULT_WORD_WEIGHT = 3;
+export const DEFAULT_CHAR_WEIGHT = 1;
+export const DEFAULT_CHAR_N = 3;
 
 export function normalizeText(text: string): string {
   return text.toLowerCase().trim().replace(/\s+/g, " ");
@@ -22,6 +22,29 @@ export function tokenizeWords(text: string): string[] {
   const normalized = normalizeText(text);
   const matches = normalized.match(/\b\w+\b/g);
   return matches ?? [];
+}
+
+function createStopWordSet(stopWords?: readonly string[]): Set<string> | undefined {
+  if (!stopWords || stopWords.length === 0) return undefined;
+
+  const normalizedStopWords = stopWords
+    .flatMap((word) => tokenizeWords(word))
+    .filter(Boolean);
+
+  return normalizedStopWords.length > 0
+    ? new Set(normalizedStopWords)
+    : undefined;
+}
+
+function removeStopWords(text: string, stopWords?: Set<string>): string {
+  const normalized = normalizeText(text);
+  if (!normalized || !stopWords || stopWords.size === 0) {
+    return normalized;
+  }
+
+  return tokenizeWords(normalized)
+    .filter((token) => !stopWords.has(token))
+    .join(" ");
 }
 
 export function charNgrams(text: string, n = DEFAULT_CHAR_N): string[] {
@@ -84,26 +107,30 @@ export function embedGroups(
     wordWeight = DEFAULT_WORD_WEIGHT,
     charWeight = DEFAULT_CHAR_WEIGHT,
     charN = DEFAULT_CHAR_N,
+    stopWords,
   } = opts;
 
   const vec = new Float32Array(dimension);
+  const stopWordSet = createStopWordSet(stopWords);
 
   for (const group of groups) {
-    const normalized = normalizeText(group.text);
+    const normalized = removeStopWords(group.text, stopWordSet);
     if (!normalized || group.weight === 0) continue;
 
+    // All searchable text shares the same hash namespace so query terms
+    // and command terms can align directly in the dot product.
     accumulateWeightedFeatures(
       vec,
       tokenizeWords(normalized),
       wordWeight * group.weight,
-      `${group.prefix}-w`
+      "w"
     );
 
     accumulateWeightedFeatures(
       vec,
       charNgrams(normalized, charN),
       charWeight * group.weight,
-      `${group.prefix}-c`
+      "c"
     );
   }
 
