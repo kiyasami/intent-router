@@ -183,6 +183,53 @@ const router = new IntentRouter({
 });
 ```
 
+## Tuning built-in weights
+
+Built-in weights have sensible defaults, but you can override them if you want to tune ranking behavior.
+
+If you are using the router's default signal stack, pass `signalWeights`:
+
+```ts
+const router = new IntentRouter({
+  commands,
+  signalWeights: {
+    centroidWeight: 0.24,
+    affinityWeight: 0.03,
+    affinityCap: 0.1,
+  },
+});
+```
+
+If you are composing your own signal array, use the built-in signal factories so each signal gets your weights:
+
+```ts
+import {
+  IntentRouter,
+  createAffinitySignal,
+  createCentroidSignal,
+  createPinnedRouteSignal,
+  createRouteParamSignal,
+} from "@intent-router/core";
+
+const weights = {
+  centroidWeight: 0.24,
+  affinityWeight: 0.03,
+  affinityCap: 0.1,
+  pinnedWeight: 0.12,
+  routeParamWeight: 1.15,
+};
+
+const router = new IntentRouter({
+  commands,
+  signals: [
+    createRouteParamSignal(weights),
+    createCentroidSignal(weights),
+    createAffinitySignal(weights),
+    createPinnedRouteSignal(weights),
+  ],
+});
+```
+
 ## Package layout
 
 ```text

@@ -1,0 +1,12 @@
+import { ScoreSignal, SignalWeights } from "./types.js";
+export declare const defaultSignalWeights: Required<SignalWeights>;
+export declare function createCentroidSignal(weights?: SignalWeights): ScoreSignal;
+export declare function createAffinitySignal(weights?: SignalWeights): ScoreSignal;
+export declare function createPinnedRouteSignal(weights?: SignalWeights): ScoreSignal;
+export declare function createRouteParamSignal(weights?: SignalWeights): ScoreSignal;
+export declare function createDefaultSignals(weights?: SignalWeights): readonly ScoreSignal[];
+export declare const centroidSignal: ScoreSignal<unknown, import("./types.js").JsonObject>;
+export declare const affinitySignal: ScoreSignal<unknown, import("./types.js").JsonObject>;
+export declare const pinnedRouteSignal: ScoreSignal<unknown, import("./types.js").JsonObject>;
+export declare const routeParamSignal: ScoreSignal<unknown, import("./types.js").JsonObject>;
+export declare const defaultSignals: readonly ScoreSignal[];

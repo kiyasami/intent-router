@@ -1,5 +1,5 @@
-import { ProfileMetadata, ScoreSignal, ScoreSignalArgs } from "./types";
-import { centroidSignal, affinitySignal } from "./signals";
+import { ProfileMetadata, ScoreSignal, ScoreSignalArgs } from "./types.js";
+import { centroidSignal, affinitySignal } from "./signals.js";
 
 /**
  * Convenience helper that applies a list of signals (defaults to the

@@ -1,12 +1,12 @@
-import { DEFAULT_DIM, embed } from "./embed";
-import { LocalProfileStore, ProfileProvider } from "./provider";
+import { DEFAULT_DIM, embed } from "./embed.js";
+import { LocalProfileStore, ProfileProvider } from "./provider.js";
 import {
   CommandId,
   EmbedOptions,
   ProfileMetadata,
   UserProfile,
   VectorLike,
-} from "./types";
+} from "./types.js";
 
 const CONFIDENCE_LOG_SCALE = 4;
 

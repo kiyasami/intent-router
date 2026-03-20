@@ -1,4 +1,4 @@
-import { ProfileMetadata, UserProfile } from "./types";
+import { ProfileMetadata, UserProfile } from "./types.js";
 
 export interface ProfileProvider<
   TMeta extends ProfileMetadata = ProfileMetadata

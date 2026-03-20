@@ -1,0 +1,16 @@
+import { centroidSignal, affinitySignal } from "./signals.js";
+/**
+ * Convenience helper that applies a list of signals (defaults to the
+ * built‑in centroid+affinity signals) and returns their sum. This mirrors
+ * how the router scores results but can be used standalone for testing or
+ * utilities.
+ */
+export function computeProfileBoost(args) {
+    const { signals = [centroidSignal, affinitySignal] } = args;
+    let total = 0;
+    for (const signal of signals) {
+        const result = signal(args);
+        total += typeof result === "number" ? result : result.score;
+    }
+    return total;
+}

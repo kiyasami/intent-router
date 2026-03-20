@@ -15,3 +15,11 @@ export const COMMON_STOP_WORDS = [
   "to",
   "with",
 ];
+
+export const DEMO_SIGNAL_WEIGHTS = {
+  centroidWeight: 0.2,
+  affinityWeight: 0.04,
+  affinityCap: 0.12,
+  pinnedWeight: 0.08,
+  routeParamWeight: 1,
+} as const;

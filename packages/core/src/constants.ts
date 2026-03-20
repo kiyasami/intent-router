@@ -3,4 +3,4 @@ export {
   DEFAULT_CHAR_WEIGHT,
   DEFAULT_DIM,
   DEFAULT_WORD_WEIGHT,
-} from "./embed";
+} from "./embed.js";

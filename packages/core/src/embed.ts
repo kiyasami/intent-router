@@ -1,4 +1,4 @@
-import { EmbedGroup, EmbedOptions } from "./types";
+import { EmbedGroup, EmbedOptions } from "./types.js";
 
 export const DEFAULT_DIM = 1024;
 export const DEFAULT_WORD_WEIGHT = 3;

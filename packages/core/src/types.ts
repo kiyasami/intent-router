@@ -56,6 +56,14 @@ export type EmbedOptions = {
   stopWords?: readonly string[];
 };
 
+export type SignalWeights = {
+  centroidWeight?: number;
+  affinityWeight?: number;
+  affinityCap?: number;
+  pinnedWeight?: number;
+  routeParamWeight?: number;
+};
+
 export type RouteQueryValue = string | number | boolean | null | undefined;
 
 export type RouteParamKind =
@@ -176,6 +184,7 @@ export type IntentRouterOptions<
   commands: readonly CommandDef<TData>[];
   dimension?: number;
   embedOptions?: EmbedOptions;
+  signalWeights?: SignalWeights;
   signals?: readonly ScoreSignal<TData, TMeta>[];
   postRankStages?: readonly PostRankStage<TData, TMeta>[];
 };

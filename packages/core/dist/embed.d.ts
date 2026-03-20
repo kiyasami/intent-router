@@ -1,0 +1,13 @@
+import { EmbedGroup, EmbedOptions } from "./types.js";
+export declare const DEFAULT_DIM = 1024;
+export declare const DEFAULT_WORD_WEIGHT = 3;
+export declare const DEFAULT_CHAR_WEIGHT = 1;
+export declare const DEFAULT_CHAR_N = 3;
+export declare function normalizeText(text: string): string;
+export declare function fnv1a32(str: string): number;
+export declare function tokenizeWords(text: string): string[];
+export declare function charNgrams(text: string, n?: number): string[];
+export declare function l2Normalize(vec: Float32Array): Float32Array;
+export declare function embedGroups(groups: readonly EmbedGroup[], dim?: number, opts?: EmbedOptions): Float32Array;
+export declare function embed(text: string, dim?: number, opts?: EmbedOptions): Float32Array;
+export declare function dot(a: Float32Array, b: Float32Array): number;

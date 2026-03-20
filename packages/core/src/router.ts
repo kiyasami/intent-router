@@ -1,4 +1,4 @@
-import { DEFAULT_DIM, dot, embed } from "./embed";
+import { DEFAULT_DIM, dot, embed } from "./embed.js";
 import {
   CommandDef,
   EmbedOptions,
@@ -12,10 +12,10 @@ import {
   ScoreSignalResult,
   PostRankStage,
   ProfileMetadata,
-} from "./types";
-import { defaultSignals } from "./signals";
-import { cloneProfile, ProfileManager } from "./profile";
-import { embedCommand } from "./utils";
+} from "./types.js";
+import { createDefaultSignals } from "./signals.js";
+import { cloneProfile, ProfileManager } from "./profile.js";
+import { embedCommand } from "./utils.js";
 
 export type RankOptions<TMeta extends ProfileMetadata = ProfileMetadata> = {
   query: string;
@@ -71,7 +71,11 @@ export class IntentRouter<
       dimension: this.dimension,
     };
     this.signals =
-      options.signals ?? (defaultSignals as readonly ScoreSignal<TData, TMeta>[]);
+      options.signals ??
+      (createDefaultSignals(options.signalWeights) as readonly ScoreSignal<
+        TData,
+        TMeta
+      >[]);
     this.postRankStages = options.postRankStages ?? [];
     this.indexed = [];
     this.commandIds = new Set();

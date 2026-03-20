@@ -1,5 +1,5 @@
-import { embedGroups } from "./embed";
-import { CommandDef, EmbedOptions } from "./types";
+import { embedGroups } from "./embed.js";
+import { CommandDef, EmbedOptions } from "./types.js";
 
 export function embedCommand<TData>(
   command: CommandDef<TData>,

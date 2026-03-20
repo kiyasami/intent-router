@@ -1,4 +1,4 @@
-import { normalizeText } from "./embed";
+import { normalizeText } from "./embed.js";
 import {
   CommandDef,
   ResolvedRouteParam,
@@ -13,7 +13,7 @@ import {
   RouteQueryValue,
   RouteResolution,
   RouteTarget,
-} from "./types";
+} from "./types.js";
 
 type PrimitiveParamKind = "number" | "string" | "identifier";
 
@@ -34,9 +34,8 @@ type NormalizedMatch = ResolvedRouteParam & {
   signature: string;
 };
 
-type RouteParamFactoryOptions = Omit<
-  RouteParamSpec,
-  "kind" | "match"
+type RouteParamFactoryOptions = Partial<
+  Omit<RouteParamSpec, "kind" | "match">
 >;
 
 const ROUTE_PARAM_SIGNAL_CAP = 0.24;
@@ -662,7 +661,7 @@ export const routeParamMatchers = {
       hints: appendHints(["phone", "call", "mobile", "cell"], options.hints),
       pattern:
         options.pattern ??
-        /\b(\+?\d[\d\s().-]{7,}\d)\b/gi,
+        /(\+?\d[\d\s().-]{7,}\d)/gi,
       parse:
         options.parse ??
         ((rawValue) => rawValue.replace(/\D+/g, "")),
