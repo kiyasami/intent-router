@@ -64,6 +64,42 @@ export type SignalWeights = {
   routeParamWeight?: number;
 };
 
+export type RouteScoringOptions = {
+  extractorStopWords?: readonly string[];
+  signalCap?: number;
+  hintBoost?: number;
+  hintSpecificityBonus?: number;
+  hintMatchedBonus?: number;
+  kindMatchBaseScore?: number;
+  specializedKindMatchBonus?: number;
+  numberKindMatchBonus?: number;
+  identifierKindMatchBonus?: number;
+  customSourceBaseScore?: number;
+  patternSourceBaseScore?: number;
+  kindSpecificity?: number;
+  identifierSpecificity?: number;
+  numberSpecificity?: number;
+  specializedKindSpecificity?: number;
+  patternSpecificityBonus?: number;
+  customSpecificityBonus?: number;
+  pathSpecificityBonus?: number;
+  valueLengthBonusThreshold?: number;
+  valueLengthBonusFactor?: number;
+  valueLengthBonusCap?: number;
+};
+
+export type RouteParamFactoryOptions = Partial<
+  Omit<RouteParamSpec, "kind" | "match">
+> & {
+  labels?: readonly string[];
+  includeDefaultHints?: boolean;
+  includeDefaultLabels?: boolean;
+};
+
+export type RouteSignalOptions = {
+  scoring?: RouteScoringOptions;
+};
+
 export type RouteQueryValue = string | number | boolean | null | undefined;
 
 export type RouteParamKind =

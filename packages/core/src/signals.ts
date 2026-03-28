@@ -1,7 +1,12 @@
 import { dot } from "./embed.js";
 import { confidence } from "./profile.js";
 import { computeRouteParamBoost } from "./route.js";
-import { CommandId, ScoreSignal, SignalWeights } from "./types.js";
+import {
+  CommandId,
+  RouteSignalOptions,
+  ScoreSignal,
+  SignalWeights,
+} from "./types.js";
 
 export const defaultSignalWeights: Required<SignalWeights> = {
   centroidWeight: 0.2,
@@ -89,10 +94,12 @@ export function createPinnedRouteSignal(
 }
 
 export function createRouteParamSignal(
-  weights: SignalWeights = {}
+  weights: SignalWeights = {},
+  options: RouteSignalOptions = {}
 ): ScoreSignal {
   const routeParamWeight =
     weights.routeParamWeight ?? defaultSignalWeights.routeParamWeight;
+  const { scoring } = options;
 
   return ({ command, query, isBlankQuery }) => {
     if (isBlankQuery) {
@@ -101,7 +108,7 @@ export function createRouteParamSignal(
 
     return {
       name: "route_params",
-      score: routeParamWeight * computeRouteParamBoost(command, query),
+      score: routeParamWeight * computeRouteParamBoost(command, query, scoring),
     };
   };
 }

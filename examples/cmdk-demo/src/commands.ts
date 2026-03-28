@@ -5,214 +5,236 @@ import {
   routeParamMatchers,
 } from "@intent-router/core";
 
+const ACCOUNT_NUMBER_PATTERN =
+  /\b(?:acct|account|account number)[\s:#-]*([A-Za-z0-9-]{4,})\b/gi;
+const CARD_NUMBER_PATTERN =
+  /\b(?:card|card number|debit card|credit card)[\s:#-]*([A-Za-z0-9-]{4,})\b/gi;
+const TRANSFER_REFERENCE_PATTERN =
+  /\b(?:transfer|wire|payment|reference|ref)[\s:#-]*([A-Za-z0-9-]{4,})\b/gi;
+const CUSTOMER_ID_PATTERN =
+  /\b(?:customer|customer id|cif|client)[\s:#-]*([A-Za-z0-9-]{4,})\b/gi;
+const LOAN_NUMBER_PATTERN =
+  /\b(?:loan|loan number|loan id)[\s:#-]*([A-Za-z0-9-]{4,})\b/gi;
+const CASE_REFERENCE_PATTERN =
+  /\b(?:case|dispute|claim|ticket)[\s:#-]*([A-Za-z0-9-]{4,})\b/gi;
+
 export const commands: RouteCommandDef[] = [
   defineRouteCommand({
-    id: "orders.search",
-    title: "Search Orders",
-    synonyms: ["order", "orders", "ord", "order lookup"],
-    keywords: ["lookup", "history", "customer orders", "find order"],
-    group: "Orders",
+    id: "accounts.overview",
+    title: "Accounts Overview",
+    synonyms: ["accounts", "balances", "my accounts", "portfolio"],
+    keywords: ["checking", "savings", "account summary"],
+    group: "Accounts",
+    data: createRouteCommandData({ pathname: "/accounts" }),
+  }),
+  defineRouteCommand({
+    id: "accounts.detail",
+    title: "Open Account Details",
+    synonyms: ["account detail", "account info", "open account", "account number"],
+    keywords: ["balance", "transactions", "account lookup"],
+    group: "Accounts",
     data: createRouteCommandData(
-      { pathname: "/orders/search" },
+      { pathname: "/accounts/:accountId" },
       [
         {
-          name: "q",
-          kind: ["identifier", "number", "string"],
-          queryKey: "q",
-          hints: ["ord", "order", "orders"],
-        },
-      ]
-    ),
-  }),
-  defineRouteCommand({
-    id: "orders.searchByPo",
-    title: "Search Orders by PO",
-    synonyms: ["po", "purchase order", "order po"],
-    keywords: ["lookup po", "find po", "po number"],
-    group: "Orders",
-    data: createRouteCommandData(
-      { pathname: "/orders/search" },
-      [routeParamMatchers.poNumber()]
-    ),
-  }),
-  defineRouteCommand({
-    id: "orders.searchByItem",
-    title: "Search Orders by Item",
-    synonyms: ["item", "item number", "order item"],
-    keywords: ["item lookup", "find item", "line item"],
-    group: "Orders",
-    data: createRouteCommandData(
-      { pathname: "/orders/search" },
-      [
-        {
-          name: "item",
-          kind: "item_number",
-          queryKey: "item",
-          hints: ["item", "item number"],
-          pattern: /\b(?:item|item number|line item)[\s:#-]*([A-Za-z0-9-]+)\b/gi,
-        },
-      ]
-    ),
-  }),
-  defineRouteCommand({
-    id: "orders.searchByInvoice",
-    title: "Search Orders by Invoice",
-    synonyms: ["invoice", "inv", "billing invoice"],
-    keywords: ["invoice lookup", "find invoice"],
-    group: "Orders",
-    data: createRouteCommandData(
-      { pathname: "/orders/search" },
-      [routeParamMatchers.invoiceNumber()]
-    ),
-  }),
-  defineRouteCommand({
-    id: "shipments.track",
-    title: "Track Shipment",
-    synonyms: ["shipment", "delivery", "tracking", "track package", "ship"],
-    keywords: ["status", "where is order", "carrier", "freight"],
-    group: "Orders",
-    data: createRouteCommandData(
-      { pathname: "/shipments/track" },
-      [
-        {
-          name: "tracking",
+          name: "accountId",
           kind: "identifier",
-          queryKey: "tracking",
-          hints: ["track", "tracking", "shipment"],
+          pathKey: "accountId",
+          hints: ["acct", "account", "account number"],
+          pattern: ACCOUNT_NUMBER_PATTERN,
         },
       ]
     ),
   }),
   defineRouteCommand({
-    id: "orders.invoices",
-    title: "View Invoices",
-    synonyms: ["invoice", "billing", "bill", "payment"],
-    keywords: ["ar", "receivable", "statements"],
-    group: "Orders",
-    data: createRouteCommandData({ pathname: "/orders/invoices" }),
-  }),
-  defineRouteCommand({
-    id: "products.brand",
-    title: "Search by Brand",
-    synonyms: ["brand", "manufacturer", "michelin", "goodyear", "bridgestone"],
-    keywords: ["catalog", "maker", "vendor"],
-    group: "Products",
+    id: "accounts.transactions",
+    title: "Search Account Transactions",
+    synonyms: ["transactions", "statement", "account activity", "ledger"],
+    keywords: ["debits", "credits", "search activity"],
+    group: "Accounts",
     data: createRouteCommandData(
-      { pathname: "/products/search" },
+      { pathname: "/accounts/transactions" },
       [
         {
-          name: "brand",
-          kind: "string",
-          queryKey: "brand",
-          hints: ["brand", "manufacturer", "maker"],
-        },
-      ]
-    ),
-  }),
-  defineRouteCommand({
-    id: "products.size",
-    title: "Search by Size",
-    synonyms: ["size", "dimension", "measurement", "tire size"],
-    keywords: ["fitment", "spec", "diameter", "width"],
-    group: "Products",
-    data: createRouteCommandData(
-      { pathname: "/products/search" },
-      [
-        {
-          name: "size",
+          name: "account",
           kind: "identifier",
-          queryKey: "size",
-          hints: ["size", "fitment"],
+          queryKey: "account",
+          hints: ["acct", "account", "account number"],
+          pattern: ACCOUNT_NUMBER_PATTERN,
         },
       ]
     ),
   }),
   defineRouteCommand({
-    id: "products.sku",
-    title: "Search by SKU",
-    synonyms: ["sku", "product code", "item number", "part number"],
-    keywords: ["inventory", "lookup", "catalog number"],
-    group: "Products",
-    data: createRouteCommandData(
-      { pathname: "/products/search" },
-      [routeParamMatchers.sku()]
-    ),
+    id: "transfers.new",
+    title: "Create Transfer",
+    synonyms: ["transfer money", "send money", "move funds", "make transfer"],
+    keywords: ["wire", "ach", "payment", "new transfer"],
+    group: "Payments",
+    data: createRouteCommandData({ pathname: "/payments/transfers/new" }),
   }),
   defineRouteCommand({
-    id: "inventory.stock",
-    title: "Check Inventory",
-    synonyms: ["inventory", "stock", "availability", "on hand"],
-    keywords: ["warehouse", "qty", "quantity"],
-    group: "Products",
+    id: "transfers.track",
+    title: "Track Transfer",
+    synonyms: ["track transfer", "wire status", "payment status", "transfer ref"],
+    keywords: ["reference", "tracking", "pending transfer"],
+    group: "Payments",
     data: createRouteCommandData(
-      { pathname: "/inventory" },
+      { pathname: "/payments/transfers/status" },
       [
         {
-          name: "q",
-          kind: ["identifier", "number", "string"],
-          queryKey: "q",
-          hints: ["inventory", "stock", "qty"],
+          name: "reference",
+          kind: "identifier",
+          queryKey: "reference",
+          hints: ["transfer", "wire", "payment", "reference", "ref"],
+          pattern: TRANSFER_REFERENCE_PATTERN,
         },
       ]
     ),
   }),
   defineRouteCommand({
-    id: "account.profile",
-    title: "Open Profile",
-    synonyms: ["profile", "account", "settings", "my account"],
-    keywords: ["preferences", "user", "me"],
-    group: "Account",
-    data: createRouteCommandData({ pathname: "/account/profile" }),
-  }),
-  defineRouteCommand({
-    id: "account.users",
-    title: "Manage Users",
-    synonyms: ["users", "team", "members", "permissions"],
-    keywords: ["roles", "access", "admin"],
-    group: "Account",
-    data: createRouteCommandData({ pathname: "/account/users" }),
-  }),
-  defineRouteCommand({
-    id: "account.userByEmail",
-    title: "Find User by Email",
-    synonyms: ["email user", "user email", "find email"],
-    keywords: ["lookup email", "contact email"],
-    group: "Account",
+    id: "cards.lookup",
+    title: "Open Card Details",
+    synonyms: ["card details", "debit card", "credit card", "card lookup"],
+    keywords: ["card controls", "freeze card", "replace card"],
+    group: "Cards",
     data: createRouteCommandData(
-      { pathname: "/account/users" },
-      [routeParamMatchers.email()]
+      { pathname: "/cards/details" },
+      [
+        {
+          name: "card",
+          kind: "identifier",
+          queryKey: "card",
+          hints: ["card", "card number", "debit card", "credit card"],
+          pattern: CARD_NUMBER_PATTERN,
+        },
+      ]
     ),
   }),
   defineRouteCommand({
-    id: "account.userByPhone",
-    title: "Find User by Phone",
-    synonyms: ["phone user", "mobile", "cell"],
-    keywords: ["lookup phone", "contact number"],
-    group: "Account",
+    id: "cards.controls",
+    title: "Manage Card Controls",
+    synonyms: ["card controls", "lock card", "freeze card", "unfreeze card"],
+    keywords: ["limits", "travel notice", "disable card"],
+    group: "Cards",
+    data: createRouteCommandData({ pathname: "/cards/controls" }),
+  }),
+  defineRouteCommand({
+    id: "customers.search",
+    title: "Search Customers",
+    synonyms: ["customer search", "find customer", "client lookup", "customer profile"],
+    keywords: ["retail customer", "business customer", "search profile"],
+    group: "Customers",
+    data: createRouteCommandData({ pathname: "/customers/search" }),
+  }),
+  defineRouteCommand({
+    id: "customers.byEmail",
+    title: "Find Customer by Email",
+    synonyms: ["email customer", "customer email", "lookup email"],
+    keywords: ["contact email", "email lookup"],
+    group: "Customers",
     data: createRouteCommandData(
-      { pathname: "/account/users" },
-      [routeParamMatchers.phone()]
+      { pathname: "/customers/search" },
+      [routeParamMatchers.email({ queryKey: "email" })]
     ),
   }),
   defineRouteCommand({
-    id: "reports.sales",
-    title: "Sales Reports",
-    synonyms: ["sales", "reports", "analytics", "dashboard"],
-    keywords: ["revenue", "performance", "metrics"],
-    group: "Reports",
-    data: createRouteCommandData({ pathname: "/reports/sales" }),
+    id: "customers.byPhone",
+    title: "Find Customer by Phone",
+    synonyms: ["phone customer", "mobile customer", "lookup phone"],
+    keywords: ["contact number", "sms number"],
+    group: "Customers",
+    data: createRouteCommandData(
+      { pathname: "/customers/search" },
+      [routeParamMatchers.phone({ queryKey: "phone" })]
+    ),
+  }),
+  defineRouteCommand({
+    id: "customers.byId",
+    title: "Find Customer by CIF",
+    synonyms: ["customer id", "cif", "client id", "customer number"],
+    keywords: ["profile id", "lookup cif"],
+    group: "Customers",
+    data: createRouteCommandData(
+      { pathname: "/customers/profile" },
+      [
+        {
+          name: "customerId",
+          kind: "identifier",
+          queryKey: "customerId",
+          hints: ["customer", "customer id", "cif", "client"],
+          pattern: CUSTOMER_ID_PATTERN,
+        },
+      ]
+    ),
+  }),
+  defineRouteCommand({
+    id: "loans.detail",
+    title: "Open Loan Details",
+    synonyms: ["loan details", "loan account", "loan lookup", "mortgage"],
+    keywords: ["loan balance", "repayment", "amortization"],
+    group: "Loans",
+    data: createRouteCommandData(
+      { pathname: "/loans/details" },
+      [
+        {
+          name: "loanId",
+          kind: "identifier",
+          queryKey: "loanId",
+          hints: ["loan", "loan number", "loan id"],
+          pattern: LOAN_NUMBER_PATTERN,
+        },
+      ]
+    ),
+  }),
+  defineRouteCommand({
+    id: "disputes.case",
+    title: "Open Dispute Case",
+    synonyms: ["dispute case", "charge dispute", "claim", "fraud case"],
+    keywords: ["ticket", "case lookup", "chargeback"],
+    group: "Service",
+    data: createRouteCommandData(
+      { pathname: "/service/disputes" },
+      [
+        {
+          name: "case",
+          kind: "identifier",
+          queryKey: "case",
+          hints: ["case", "dispute", "claim", "ticket"],
+          pattern: CASE_REFERENCE_PATTERN,
+        },
+      ]
+    ),
+  }),
+  defineRouteCommand({
+    id: "kyc.review",
+    title: "Review KYC Queue",
+    synonyms: ["kyc", "kyc queue", "compliance review", "document review"],
+    keywords: ["verification", "onboarding", "pending review"],
+    group: "Compliance",
+    data: createRouteCommandData({ pathname: "/compliance/kyc" }),
+  }),
+  defineRouteCommand({
+    id: "fraud.alerts",
+    title: "Fraud Alerts Dashboard",
+    synonyms: ["fraud alerts", "fraud dashboard", "risk alerts", "monitor alerts"],
+    keywords: ["suspicious activity", "alerts", "risk review"],
+    group: "Compliance",
+    data: createRouteCommandData({ pathname: "/risk/fraud-alerts" }),
   }),
 ];
 
 export const scenarioQueries = [
-  { label: "Exact title", query: "search orders" },
-  { label: "Order code", query: "ord 1234ds" },
-  { label: "PO route", query: "po 1234ds" },
-  { label: "Item route", query: "item 88x1" },
-  { label: "Invoice route", query: "invoice INV-44321" },
-  { label: "Shipment", query: "track zx9001" },
-  { label: "Brand search", query: "find michelin tires" },
-  { label: "SKU search", query: "sku ABC-12345" },
-  { label: "Email route", query: "user jane@example.com" },
-  { label: "Phone route", query: "call +1 (555) 123-4567" },
+  { label: "Account overview", query: "show my accounts" },
+  { label: "Account detail", query: "open account 00981234" },
+  { label: "Transactions", query: "transactions for account 00981234" },
+  { label: "Transfer status", query: "track wire ref TRX-20491" },
+  { label: "Create transfer", query: "send money to another account" },
+  { label: "Card detail", query: "card 4455" },
+  { label: "Customer email", query: "customer jane.doe@northbank.com" },
+  { label: "Customer phone", query: "call customer +1 (555) 123-4567" },
+  { label: "Customer CIF", query: "find cif CUST-8821" },
+  { label: "Loan detail", query: "loan LN-77881" },
+  { label: "Dispute case", query: "dispute case DSP-4102" },
+  { label: "Fraud alerts", query: "show fraud alerts dashboard" },
 ];

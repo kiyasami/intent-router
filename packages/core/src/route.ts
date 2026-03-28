@@ -4,6 +4,7 @@ import {
   ResolvedRouteParam,
   RouteCommandDef,
   RouteCommandData,
+  RouteParamFactoryOptions,
   RouteParamKind,
   RouteParamMatch,
   RouteParamMatchContext,
@@ -12,6 +13,7 @@ import {
   RouteParamSpec,
   RouteQueryValue,
   RouteResolution,
+  RouteScoringOptions,
   RouteTarget,
 } from "./types.js";
 
@@ -34,37 +36,74 @@ type NormalizedMatch = ResolvedRouteParam & {
   signature: string;
 };
 
-type RouteParamFactoryOptions = Partial<
-  Omit<RouteParamSpec, "kind" | "match">
->;
+type ResolvedRouteScoringOptions = Required<Omit<RouteScoringOptions, "extractorStopWords">> & {
+  extractorStopWords: readonly string[];
+};
 
-const ROUTE_PARAM_SIGNAL_CAP = 0.24;
-const ROUTE_EXTRACTOR_STOP_WORDS = new Set([
-  "account",
-  "by",
-  "check",
-  "find",
-  "for",
-  "history",
-  "in",
-  "is",
-  "lookup",
-  "manage",
-  "my",
-  "on",
-  "open",
-  "order",
-  "orders",
-  "profile",
-  "report",
-  "reports",
-  "search",
-  "settings",
-  "show",
-  "track",
-  "view",
-  "where",
-]);
+export const defaultRouteScoringOptions: ResolvedRouteScoringOptions = {
+  extractorStopWords: [
+    "account",
+    "by",
+    "check",
+    "find",
+    "for",
+    "history",
+    "in",
+    "is",
+    "lookup",
+    "manage",
+    "my",
+    "on",
+    "open",
+    "order",
+    "orders",
+    "profile",
+    "report",
+    "reports",
+    "search",
+    "settings",
+    "show",
+    "track",
+    "view",
+    "where",
+  ],
+  signalCap: 0.24,
+  hintBoost: 0.06,
+  hintSpecificityBonus: 0.01,
+  hintMatchedBonus: 0.015,
+  kindMatchBaseScore: 0.05,
+  specializedKindMatchBonus: 0.02,
+  numberKindMatchBonus: 0.02,
+  identifierKindMatchBonus: 0.015,
+  customSourceBaseScore: 0.14,
+  patternSourceBaseScore: 0.1,
+  kindSpecificity: 0.008,
+  identifierSpecificity: 0.012,
+  numberSpecificity: 0.01,
+  specializedKindSpecificity: 0.04,
+  patternSpecificityBonus: 0.015,
+  customSpecificityBonus: 0.03,
+  pathSpecificityBonus: 0.01,
+  valueLengthBonusThreshold: 5,
+  valueLengthBonusFactor: 0.002,
+  valueLengthBonusCap: 0.02,
+};
+
+const DEFAULT_PO_LABELS = ["po", "purchase order"] as const;
+const DEFAULT_PO_HINTS = ["po", "purchase order"] as const;
+const DEFAULT_SKU_LABELS = [
+  "sku",
+  "product code",
+  "part number",
+  "catalog number",
+] as const;
+const DEFAULT_SKU_HINTS = DEFAULT_SKU_LABELS;
+const DEFAULT_INVOICE_LABELS = ["invoice", "inv"] as const;
+const DEFAULT_INVOICE_HINTS = DEFAULT_INVOICE_LABELS;
+const DEFAULT_ITEM_NUMBER_LABELS = ["item", "item number", "line item"] as const;
+const DEFAULT_ITEM_NUMBER_HINTS = DEFAULT_ITEM_NUMBER_LABELS;
+const DEFAULT_EMAIL_HINTS = ["email", "mail"] as const;
+const DEFAULT_PHONE_HINTS = ["phone", "call", "mobile", "cell"] as const;
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -75,6 +114,26 @@ function toGlobalRegex(pattern: RegExp): RegExp {
     ? pattern.flags
     : `${pattern.flags}g`;
   return new RegExp(pattern.source, flags);
+}
+
+function resolveRouteScoringOptions(
+  options: RouteScoringOptions = {}
+): ResolvedRouteScoringOptions {
+  return {
+    ...defaultRouteScoringOptions,
+    ...options,
+    extractorStopWords:
+      options.extractorStopWords ?? defaultRouteScoringOptions.extractorStopWords,
+  };
+}
+
+function createStopWordSet(words: readonly string[]): Set<string> {
+  return new Set(
+    words
+      .flatMap((word) => tokenizeQuery(word))
+      .map((token) => token.normalized)
+      .filter(Boolean)
+  );
 }
 
 function tokenizeQuery(query: string): QueryToken[] {
@@ -99,12 +158,15 @@ function classifyCandidateKinds(token: string): PrimitiveParamKind[] {
   return ["string"];
 }
 
-function getParamCandidates(query: string): ParamCandidate[] {
+function getParamCandidates(
+  query: string,
+  stopWords: Set<string>
+): ParamCandidate[] {
   return tokenizeQuery(query)
     .filter(
       (token) =>
         token.normalized.length >= 2 &&
-        !ROUTE_EXTRACTOR_STOP_WORDS.has(token.normalized)
+        !stopWords.has(token.normalized)
     )
     .map((token) => ({
       value: token.original,
@@ -161,10 +223,11 @@ function getQueryTokenSet(queryTokens: readonly string[]): Set<string> {
 function withHintBoost(
   score: number,
   hints: Set<string>,
-  queryTokens: Set<string>
+  queryTokens: Set<string>,
+  scoring: ResolvedRouteScoringOptions
 ): number {
   if (hints.size > 0 && [...hints].some((hint) => queryTokens.has(hint))) {
-    return score + 0.06;
+    return score + scoring.hintBoost;
   }
 
   return score;
@@ -181,25 +244,31 @@ function isSpecializedKind(kind: RouteParamKind): boolean {
   return !["number", "string", "identifier"].includes(kind);
 }
 
-function getKindSpecificity(kind: RouteParamKind): number {
-  if (isSpecializedKind(kind)) return 0.04;
-  if (kind === "identifier") return 0.012;
-  if (kind === "number") return 0.01;
-  return 0.008;
+function getKindSpecificityWithOptions(
+  kind: RouteParamKind,
+  scoring: ResolvedRouteScoringOptions
+): number {
+  if (isSpecializedKind(kind)) return scoring.specializedKindSpecificity;
+  if (kind === "identifier") return scoring.identifierSpecificity;
+  if (kind === "number") return scoring.numberSpecificity;
+  return scoring.kindSpecificity;
 }
 
-function getSpecSpecificity(spec: RouteParamSpec): number {
+function getSpecSpecificity(
+  spec: RouteParamSpec,
+  scoring: ResolvedRouteScoringOptions
+): number {
   if (typeof spec.specificity === "number") {
     return spec.specificity;
   }
 
   const kinds = toKindList(spec.kind);
   const kindSpecificity = kinds.length === 1
-    ? getKindSpecificity(kinds[0])
-    : Math.max(...kinds.map(getKindSpecificity)) * 0.5;
-  const patternSpecificity = spec.pattern ? 0.015 : 0;
-  const customSpecificity = spec.match ? 0.03 : 0;
-  const pathSpecificity = spec.pathKey ? 0.01 : 0;
+    ? getKindSpecificityWithOptions(kinds[0], scoring)
+    : Math.max(...kinds.map((kind) => getKindSpecificityWithOptions(kind, scoring))) * 0.5;
+  const patternSpecificity = spec.pattern ? scoring.patternSpecificityBonus : 0;
+  const customSpecificity = spec.match ? scoring.customSpecificityBonus : 0;
+  const pathSpecificity = spec.pathKey ? scoring.pathSpecificityBonus : 0;
 
   return kindSpecificity + patternSpecificity + customSpecificity + pathSpecificity;
 }
@@ -221,7 +290,8 @@ function normalizeMatch(
   source: RouteParamMatchSource,
   spec: RouteParamSpec,
   queryTokens: Set<string>,
-  usedSignatures: Set<string>
+  usedSignatures: Set<string>,
+  scoring: ResolvedRouteScoringOptions
 ): NormalizedMatch | null {
   const rawValue = match.value.trim();
   if (!rawValue) return null;
@@ -243,16 +313,25 @@ function normalizeMatch(
   const hintMatched = hasHintMatch(hints, queryTokens);
   const baseScore =
     match.score ??
-    (source === "custom" ? 0.14 : source === "pattern" ? 0.1 : 0.05);
-  let score = withHintBoost(baseScore, hints, queryTokens);
-  const specificity = getSpecSpecificity(spec);
+    (
+      source === "custom"
+        ? scoring.customSourceBaseScore
+        : source === "pattern"
+          ? scoring.patternSourceBaseScore
+          : scoring.kindMatchBaseScore
+    );
+  let score = withHintBoost(baseScore, hints, queryTokens, scoring);
+  const specificity = getSpecSpecificity(spec, scoring);
 
   if (hintMatched && specificity > 0) {
-    score += 0.01;
+    score += scoring.hintSpecificityBonus;
   }
 
-  if (normalizedRouteValue.length >= 5) {
-    score += Math.min(0.02, normalizedRouteValue.length * 0.002);
+  if (normalizedRouteValue.length >= scoring.valueLengthBonusThreshold) {
+    score += Math.min(
+      scoring.valueLengthBonusCap,
+      normalizedRouteValue.length * scoring.valueLengthBonusFactor
+    );
   }
 
   return {
@@ -273,7 +352,8 @@ function normalizeMatch(
 function scoreCandidateForSpec(
   candidate: ParamCandidate,
   spec: RouteParamSpec,
-  queryTokens: Set<string>
+  queryTokens: Set<string>,
+  scoring: ResolvedRouteScoringOptions
 ): RouteParamMatch | null {
   let best: RouteParamMatch | null = null;
   const hints = tokenizeHints(spec.hints);
@@ -284,25 +364,25 @@ function scoreCandidateForSpec(
       continue;
     }
 
-    let score = 0.05;
+    let score = scoring.kindMatchBaseScore;
 
     if (
       kind !== "string" &&
       kind !== "identifier" &&
       kind !== "number"
     ) {
-      score += 0.02;
+      score += scoring.specializedKindMatchBonus;
     }
 
     if (kind === "number" && candidate.kinds.includes("number")) {
-      score += 0.02;
+      score += scoring.numberKindMatchBonus;
     }
 
     if (kind === "identifier" && candidate.kinds.includes("identifier")) {
-      score += 0.015;
+      score += scoring.identifierKindMatchBonus;
     }
 
-    score = withHintBoost(score, hints, queryTokens);
+    score = withHintBoost(score, hints, queryTokens, scoring);
 
     if (!best || score > (best.score ?? 0)) {
       best = { value: candidate.value, kind, score };
@@ -356,7 +436,8 @@ function findBestNormalizedMatch(
   source: RouteParamMatchSource,
   spec: RouteParamSpec,
   queryTokens: Set<string>,
-  usedSignatures: Set<string>
+  usedSignatures: Set<string>,
+  scoring: ResolvedRouteScoringOptions
 ): NormalizedMatch | null {
   let bestMatch: NormalizedMatch | null = null;
 
@@ -366,7 +447,8 @@ function findBestNormalizedMatch(
       source,
       spec,
       queryTokens,
-      usedSignatures
+      usedSignatures,
+      scoring
     );
     if (!normalized) continue;
 
@@ -383,7 +465,8 @@ function findBestMatchForSpec(
   query: string,
   queryTokens: readonly string[],
   candidates: readonly ParamCandidate[],
-  usedSignatures: Set<string>
+  usedSignatures: Set<string>,
+  scoring: ResolvedRouteScoringOptions
 ): NormalizedMatch | null {
   const queryTokenSet = getQueryTokenSet(queryTokens);
   const context: RouteParamMatchContext = { query, queryTokens };
@@ -393,7 +476,8 @@ function findBestMatchForSpec(
     "custom",
     spec,
     queryTokenSet,
-    usedSignatures
+    usedSignatures,
+    scoring
   );
   if (customMatch) return customMatch;
 
@@ -402,18 +486,20 @@ function findBestMatchForSpec(
     "pattern",
     spec,
     queryTokenSet,
-    usedSignatures
+    usedSignatures,
+    scoring
   );
   if (patternMatch) return patternMatch;
 
   return findBestNormalizedMatch(
     candidates
-      .map((candidate) => scoreCandidateForSpec(candidate, spec, queryTokenSet))
+      .map((candidate) => scoreCandidateForSpec(candidate, spec, queryTokenSet, scoring))
       .filter((match): match is RouteParamMatch => Boolean(match)),
     "kind",
     spec,
     queryTokenSet,
-    usedSignatures
+    usedSignatures,
+    scoring
   );
 }
 
@@ -461,11 +547,14 @@ export function isRouteCommandData(value: unknown): value is RouteCommandData {
 
 export function resolveRouteParams(
   query: string,
-  specs?: readonly RouteParamSpec[]
+  specs?: readonly RouteParamSpec[],
+  options: RouteScoringOptions = {}
 ): ResolvedRouteParam[] {
   if (!specs || specs.length === 0) return [];
 
-  const candidates = getParamCandidates(query);
+  const scoring = resolveRouteScoringOptions(options);
+  const stopWords = createStopWordSet(scoring.extractorStopWords);
+  const candidates = getParamCandidates(query, stopWords);
   const queryTokens = getQueryTokens(query);
   const usedSignatures = new Set<string>();
   const resolved: ResolvedRouteParam[] = [];
@@ -476,7 +565,8 @@ export function resolveRouteParams(
       query,
       queryTokens,
       candidates,
-      usedSignatures
+      usedSignatures,
+      scoring
     );
 
     if (!bestMatch) continue;
@@ -491,11 +581,13 @@ export function resolveRouteParams(
 
 export function computeRouteParamBoost<TData = unknown>(
   command: CommandDef<TData>,
-  query: string
+  query: string,
+  options: RouteScoringOptions = {}
 ): number {
   if (!isRouteCommandData(command.data)) return 0;
 
-  const matches = resolveRouteParams(query, command.data.params);
+  const scoring = resolveRouteScoringOptions(options);
+  const matches = resolveRouteParams(query, command.data.params, scoring);
   if (matches.length === 0) return 0;
 
   const total = matches.reduce(
@@ -503,20 +595,21 @@ export function computeRouteParamBoost<TData = unknown>(
       sum +
       match.score +
       match.specificity +
-      (match.hintMatched ? 0.015 : 0),
+      (match.hintMatched ? scoring.hintMatchedBonus : 0),
     0
   );
-  return Math.min(ROUTE_PARAM_SIGNAL_CAP, total);
+  return Math.min(scoring.signalCap, total);
 }
 
 export function resolveCommandRoute<TData = unknown>(
   command: CommandDef<TData>,
-  query: string
+  query: string,
+  options: RouteScoringOptions = {}
 ): RouteResolution | undefined {
   if (!isRouteCommandData(command.data)) return undefined;
 
   const routeData = command.data;
-  const params = resolveRouteParams(query, routeData.params);
+  const params = resolveRouteParams(query, routeData.params, options);
   const queryValues: Record<string, RouteQueryValue> = {
     ...(routeData.route.query ?? {}),
   };
@@ -571,76 +664,142 @@ function createLabelPattern(
   );
 }
 
-function appendHints(
-  baseHints: readonly string[],
-  extraHints?: readonly string[]
+function mergeFactoryValues(
+  defaults: readonly string[],
+  custom: readonly string[] | undefined,
+  includeDefaults = true
 ): readonly string[] {
-  return [...baseHints, ...(extraHints ?? [])];
+  const merged = includeDefaults
+    ? [...defaults, ...(custom ?? [])]
+    : [...(custom ?? [])];
+
+  const deduped = [...new Set(merged.filter(Boolean))];
+  return deduped.length > 0 ? deduped : [...defaults];
 }
 
 export const routeParamMatchers = {
   poNumber(options: RouteParamFactoryOptions = {}): RouteParamSpec {
+    const labels = mergeFactoryValues(
+      DEFAULT_PO_LABELS,
+      options.labels,
+      options.includeDefaultLabels !== false
+    );
+    const hints = mergeFactoryValues(
+      DEFAULT_PO_HINTS,
+      options.hints,
+      options.includeDefaultHints !== false
+    );
+
     return {
       name: options.name ?? "po",
       kind: "po_number",
       required: options.required,
       queryKey: options.queryKey ?? "po",
       pathKey: options.pathKey,
-      hints: appendHints(["po", "purchase order"], options.hints),
+      hints,
       parse: options.parse,
       validate: options.validate,
       pattern:
         options.pattern ??
-        createLabelPattern(["po", "purchase order"], "[A-Za-z0-9-]+"),
+        createLabelPattern(labels, "[A-Za-z0-9-]+"),
     };
   },
 
   sku(options: RouteParamFactoryOptions = {}): RouteParamSpec {
+    const labels = mergeFactoryValues(
+      DEFAULT_SKU_LABELS,
+      options.labels,
+      options.includeDefaultLabels !== false
+    );
+    const hints = mergeFactoryValues(
+      DEFAULT_SKU_HINTS,
+      options.hints,
+      options.includeDefaultHints !== false
+    );
+
     return {
       name: options.name ?? "sku",
       kind: "sku",
       required: options.required,
       queryKey: options.queryKey ?? "sku",
       pathKey: options.pathKey,
-      hints: appendHints(
-        ["sku", "product code", "part number", "catalog number"],
-        options.hints
-      ),
+      hints,
       parse: options.parse,
       validate: options.validate,
       pattern:
         options.pattern ??
-        createLabelPattern(
-          ["sku", "product code", "part number", "catalog number"],
-          "[A-Za-z0-9-]+"
-        ),
+        createLabelPattern(labels, "[A-Za-z0-9-]+"),
     };
   },
 
   invoiceNumber(options: RouteParamFactoryOptions = {}): RouteParamSpec {
+    const labels = mergeFactoryValues(
+      DEFAULT_INVOICE_LABELS,
+      options.labels,
+      options.includeDefaultLabels !== false
+    );
+    const hints = mergeFactoryValues(
+      DEFAULT_INVOICE_HINTS,
+      options.hints,
+      options.includeDefaultHints !== false
+    );
+
     return {
       name: options.name ?? "invoice",
       kind: "invoice_number",
       required: options.required,
       queryKey: options.queryKey ?? "invoice",
       pathKey: options.pathKey,
-      hints: appendHints(["invoice", "inv"], options.hints),
+      hints,
       parse: options.parse,
       validate: options.validate,
       pattern:
         options.pattern ??
-        createLabelPattern(["invoice", "inv"], "[A-Za-z0-9-]+"),
+        createLabelPattern(labels, "[A-Za-z0-9-]+"),
+    };
+  },
+
+  itemNumber(options: RouteParamFactoryOptions = {}): RouteParamSpec {
+    const labels = mergeFactoryValues(
+      DEFAULT_ITEM_NUMBER_LABELS,
+      options.labels,
+      options.includeDefaultLabels !== false
+    );
+    const hints = mergeFactoryValues(
+      DEFAULT_ITEM_NUMBER_HINTS,
+      options.hints,
+      options.includeDefaultHints !== false
+    );
+
+    return {
+      name: options.name ?? "item",
+      kind: "item_number",
+      required: options.required,
+      queryKey: options.queryKey ?? "item",
+      pathKey: options.pathKey,
+      hints,
+      parse: options.parse,
+      validate: options.validate,
+      pattern:
+        options.pattern ??
+        createLabelPattern(labels, "[A-Za-z0-9-]+"),
     };
   },
 
   email(options: RouteParamFactoryOptions = {}): RouteParamSpec {
+    const hints = mergeFactoryValues(
+      DEFAULT_EMAIL_HINTS,
+      options.hints,
+      options.includeDefaultHints !== false
+    );
+
     return {
       name: options.name ?? "email",
       kind: "email",
       required: options.required,
       queryKey: options.queryKey ?? "email",
       pathKey: options.pathKey,
-      hints: appendHints(["email", "mail"], options.hints),
+      hints,
       pattern:
         options.pattern ??
         /\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/gi,
@@ -652,13 +811,19 @@ export const routeParamMatchers = {
   },
 
   phone(options: RouteParamFactoryOptions = {}): RouteParamSpec {
+    const hints = mergeFactoryValues(
+      DEFAULT_PHONE_HINTS,
+      options.hints,
+      options.includeDefaultHints !== false
+    );
+
     return {
       name: options.name ?? "phone",
       kind: "phone",
       required: options.required,
       queryKey: options.queryKey ?? "phone",
       pathKey: options.pathKey,
-      hints: appendHints(["phone", "call", "mobile", "cell"], options.hints),
+      hints,
       pattern:
         options.pattern ??
         /(\+?\d[\d\s().-]{7,}\d)/gi,

@@ -19,6 +19,138 @@ function formatSignalName(name: string): string {
   return name.replace(/_/g, " ");
 }
 
+type BrowserRouteState = {
+  pathname: string;
+  search: string;
+  hash: string;
+  href: string;
+};
+
+function readBrowserRoute(): BrowserRouteState {
+  const { pathname, search, hash } = window.location;
+  return {
+    pathname,
+    search,
+    hash,
+    href: `${pathname}${search}${hash}`,
+  };
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .split(/[\s/-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function describeRoutePage(route: BrowserRouteState): {
+  title: string;
+  summary: string;
+  params: string[];
+} {
+  const searchParams = new URLSearchParams(route.search);
+  const params = Array.from(searchParams.entries()).map(
+    ([key, value]) => `${key}=${value}`
+  );
+
+  if (route.pathname === "/accounts") {
+    return {
+      title: "Accounts Overview",
+      summary: "Portfolio and balance summary for the signed-in customer.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/accounts/") && route.pathname !== "/accounts/transactions") {
+    const accountId = decodeURIComponent(route.pathname.split("/")[2] ?? "");
+    return {
+      title: `Account ${accountId || "Details"}`,
+      summary: "Account profile, current balance, and recent activity.",
+      params,
+    };
+  }
+
+  if (route.pathname === "/accounts/transactions") {
+    return {
+      title: "Transaction Search",
+      summary: "Filtered ledger activity for the selected account.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/payments/transfers")) {
+    return {
+      title:
+        route.pathname === "/payments/transfers/new"
+          ? "Create Transfer"
+          : "Transfer Tracking",
+      summary: "Outgoing payment workflow and transfer reference tracking.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/cards")) {
+    return {
+      title: route.pathname === "/cards/controls" ? "Card Controls" : "Card Details",
+      summary: "Card servicing, controls, and replacement actions.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/customers")) {
+    return {
+      title:
+        route.pathname === "/customers/profile" ? "Customer Profile" : "Customer Search",
+      summary: "Customer lookup results and profile details.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/loans")) {
+    return {
+      title: "Loan Details",
+      summary: "Loan account status, repayment schedule, and balances.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/service/disputes")) {
+    return {
+      title: "Dispute Case",
+      summary: "Case handling, notes, and dispute resolution workflow.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/compliance/kyc")) {
+    return {
+      title: "KYC Queue",
+      summary: "Verification queue for pending onboarding and review tasks.",
+      params,
+    };
+  }
+
+  if (route.pathname.startsWith("/risk/fraud-alerts")) {
+    return {
+      title: "Fraud Alerts Dashboard",
+      summary: "Monitoring queue for suspicious activity alerts and risk review.",
+      params,
+    };
+  }
+
+  const fallbackTitle =
+    route.pathname === "/"
+      ? "Intent Router Lab"
+      : toTitleCase(route.pathname.replace(/^\//, "").replace(/\//g, " "));
+
+  return {
+    title: fallbackTitle,
+    summary: "No simulated bank page matched this path yet, but the browser URL is in sync.",
+    params,
+  };
+}
+
 export default function App() {
   const userId = "demo-user";
   const profileStore = React.useMemo(() => new LocalStorageProfileStore(), []);
@@ -45,6 +177,7 @@ export default function App() {
   const [refreshed, setRefreshed] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [selectedResult, setSelectedResult] = React.useState<RankedCommand<RouteCommandData> | null>(null);
+  const [browserRoute, setBrowserRoute] = React.useState<BrowserRouteState>(() => readBrowserRoute());
   const [useLocalProfile, setUseLocalProfile] = React.useState(true);
   const storedProfile = profileManager.getLocal(userId);
   const localProfile = React.useMemo<UserProfile>(() => {
@@ -85,6 +218,16 @@ export default function App() {
         : null,
     [query, selectedResult]
   );
+  const routePage = React.useMemo(
+    () => describeRoutePage(browserRoute),
+    [browserRoute]
+  );
+
+  React.useEffect(() => {
+    const onPopState = () => setBrowserRoute(readBrowserRoute());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   React.useEffect(() => {
     const next = results.find((r) => r.id === selectedId) ?? null;
@@ -103,7 +246,8 @@ export default function App() {
   }, [profileManager, userId]);
 
   const handleSelect = React.useCallback(
-    (id: string) => {
+    (result: RankedCommand<RouteCommandData>) => {
+      const id = result.id;
       setSelectedId(id);
       router.personalize(
         {
@@ -114,6 +258,11 @@ export default function App() {
         },
         profileManager
       );
+      const resolvedRoute = resolveCommandRoute(result.command, query);
+      if (resolvedRoute) {
+        window.history.pushState({}, "", resolvedRoute.href);
+        setBrowserRoute(readBrowserRoute());
+      }
       setRefreshed((value) => !value);
     },
     [learnAffinityDelta, profileManager, query, userId]
@@ -164,8 +313,9 @@ export default function App() {
         <div>
           <h1 style={styles.h1}>Intent Router Lab</h1>
           <p style={styles.sub}>
-            Minimal cmdk playground for testing lexical match, profile learning,
-            centroid/affinity boosts, pinning, import/export, and score breakdowns.
+            Banking-flavored cmdk playground for testing lexical match, profile
+            learning, centroid and affinity boosts, pinning, route params, and
+            score breakdowns.
           </p>
         </div>
       </div>
@@ -239,10 +389,10 @@ export default function App() {
               shouldFilter={false}
               style={styles.cmdkRoot}
             >
-              <Command.Input
+              <input
                 value={query}
-                onValueChange={setQuery}
-                placeholder="Type queries like: where is my order, track delivery, michelin, sku, warehouse qty..."
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Type queries like: open account 00981234, track wire ref TRX-20491, customer jane.doe@northbank.com..."
                 style={styles.input}
               />
               <Command.List style={styles.list}>
@@ -259,8 +409,14 @@ export default function App() {
                     return (
                       <Command.Item
                         key={item.id}
-                        value={`${item.id} ${item.command.title}`}
-                        onSelect={() => handleSelect(item.id)}
+                        value={item.id}
+                        keywords={[
+                          item.command.title,
+                          ...(item.command.synonyms ?? []),
+                          ...(item.command.keywords ?? []),
+                          item.command.group ?? "",
+                        ]}
+                        onSelect={() => handleSelect(item)}
                         style={{
                           ...styles.item,
                           ...(selected ? styles.itemSelected : {}),
@@ -358,6 +514,32 @@ export default function App() {
         </section>
 
         <section style={styles.rightCol}>
+          <div style={styles.card}>
+            <div style={styles.rowBetween}>
+              <strong>Browser Route</strong>
+              <span style={styles.muted}>Clicking a result now pushes history</span>
+            </div>
+
+            <div style={styles.details}>
+              <div>
+                <div style={styles.kvLabel}>Current URL</div>
+                <div>{browserRoute.href}</div>
+              </div>
+              <div>
+                <div style={styles.kvLabel}>Simulated page</div>
+                <div>{routePage.title}</div>
+              </div>
+              <div style={styles.detailWide}>
+                <div style={styles.kvLabel}>Page summary</div>
+                <div>{routePage.summary}</div>
+              </div>
+              <div style={styles.detailWide}>
+                <div style={styles.kvLabel}>Query params</div>
+                <div>{routePage.params.length ? routePage.params.join(", ") : "-"}</div>
+              </div>
+            </div>
+          </div>
+
           <div style={styles.card}>
             <div style={styles.rowBetween}>
               <strong>Selected result details</strong>

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  computeRouteParamBoost,
+  createRouteParamSignal,
   IntentRouter,
   createRouteCommandData,
   resolveCommandRoute,
@@ -112,6 +114,71 @@ test("built-in SKU matcher extracts labeled SKU values", () => {
   assert.equal(resolved.length, 1);
   assert.equal(resolved[0].value, "ABC-12345");
   assert.equal(resolved[0].kind, "sku");
+  assert.equal(resolved[0].source, "pattern");
+});
+
+test("route scoring options allow callers to tune hint bonuses", () => {
+  const command = routeCommands[1];
+  const defaultBoost = computeRouteParamBoost(command, "po 1234ds");
+  const customBoost = computeRouteParamBoost(command, "po 1234ds", {
+    signalCap: 1,
+    hintMatchedBonus: 0,
+  });
+
+  assert.equal(customBoost, defaultBoost - 0.015);
+});
+
+test("route param signal accepts scoring overrides", () => {
+  const router = new IntentRouter({
+    commands: routeCommands,
+    signals: [
+      createRouteParamSignal(
+        {},
+        {
+          scoring: {
+            signalCap: 1,
+            hintMatchedBonus: 0,
+          },
+        }
+      ),
+    ],
+  });
+
+  const [result] = router.rank({ query: "po 1234ds", limit: 1 });
+  const contribution = result.breakdown.signals.find(
+    (signal) => signal.name === "route_params"
+  );
+
+  assert.ok(contribution, "expected a route_params contribution");
+  assert.equal(contribution.score, computeRouteParamBoost(routeCommands[1], "po 1234ds", {
+    signalCap: 1,
+    hintMatchedBonus: 0,
+  }));
+});
+
+test("built-in PO matcher accepts custom labels and hints", () => {
+  const resolved = resolveRouteParams("purchase-code ABC-42", [
+    routeParamMatchers.poNumber({
+      labels: ["purchase-code"],
+      hints: ["purchase-code"],
+      includeDefaultLabels: false,
+      includeDefaultHints: false,
+    }),
+  ]);
+
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].value, "ABC-42");
+  assert.equal(resolved[0].kind, "po_number");
+});
+
+test("built-in item matcher extracts labeled item values", () => {
+  const resolved = resolveRouteParams("line item 88x1", [
+    routeParamMatchers.itemNumber(),
+  ]);
+
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].value, "88x1");
+  assert.equal(resolved[0].kind, "item_number");
   assert.equal(resolved[0].source, "pattern");
 });
 
